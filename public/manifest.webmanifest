@@ -1,0 +1,11 @@
+{
+  "name": "KAKE — Diário pessoal",
+  "short_name": "KAKE",
+  "description": "Diário pessoal de alimentação, água e rotina.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c1118",
+  "theme_color": "#0c1118",
+  "lang": "pt-BR",
+  "icons": [{ "src": "/icons/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
