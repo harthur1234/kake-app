@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ConsistencySection, type DayActivityData } from './components/ConsistencySection'
 import './App.css'
 
-type Food = { id: number; description: string; category: string; energy_kcal?: number | string; protein_g?: number | string; carbohydrate_g?: number | string; lipid_g?: number | string; source?: 'TACO' | 'Estimativa'; unitKcal?: number }
+type Food = { id: number; description: string; category: string; energy_kcal?: number | string; protein_g?: number | string; carbohydrate_g?: number | string; lipid_g?: number | string; source?: 'TACO' | 'Estimativa' | 'Mercado Online'; unitKcal?: number }
 type Slot = 'Café / Merenda' | 'Almoço' | 'Pré-Treino' | 'Jantar' | 'Refeição Livre / Lanche' | 'Merenda da Escola' | 'Jantar Único'
-type Item = { id: string; foodId: number; name: string; grams: number; kcal?: number; protein?: number; carbs?: number; fat?: number; source?: 'TACO' | 'Estimativa' }
+type Item = { id: string; foodId: number; name: string; grams: number; kcal?: number; protein?: number; carbs?: number; fat?: number; source?: 'TACO' | 'Estimativa' | 'Mercado Online' }
 type Meal = { id: string; slot: Slot; time: string; date: string; items: Item[] }
 type Activity = { id: string; kind: string; date: string; done: boolean; km?: number; minutes?: number; label?: string }
 type Measure = { id: string; date: string; weight?: number; bodyFat?: number; muscle?: number; hydration?: number; waist?: number; chest?: number; arm?: number }
@@ -13,10 +14,10 @@ type Store = { meals: Meal[]; water: Record<string, number>; activities: Activit
 
 const KEY = 'kake-pessoal-v2'
 const SLOTS: Array<{ name: Slot; time: string }> = [
-  { name: 'Café / Merenda', time: '09:00' },
+  { name: 'Merenda da Escola', time: '10:00' },
   { name: 'Almoço', time: '12:00' },
   { name: 'Pré-Treino', time: '16:00' },
-  { name: 'Jantar', time: '20:00' },
+  { name: 'Jantar Único', time: '21:00' },
   { name: 'Refeição Livre / Lanche', time: 'Livre' },
 ]
 
@@ -24,7 +25,14 @@ const initialExercises = (): Store['exercises'] => ({ A: [], B: [], C: [] })
 const empty: Store = { meals: [], water: {}, activities: [], comparison: null, comparisonConfirmed: false, waterReference: 3500, bottleMl: 500, servings: { 'Colher de Servir': 60, Concha: 90, Escumadeira: 85, 'Colher de Sopa': 25 }, creatine: {}, measures: [], combos: [], customFoods: [], exercises: initialExercises(), trainings: [] }
 const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 const safeRead = (): Store => { try { const data = JSON.parse(localStorage.getItem(KEY) || 'null'); return data ? { ...empty, ...data, exercises: { ...initialExercises(), ...(data.exercises || {}) }, servings: { ...empty.servings, ...(data.servings || {}) } } : empty } catch { return empty } }
-const numeric = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null
+const numeric = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value.replace(',', '.'))
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
 const format = (value: number, digits = 0) => value.toLocaleString('pt-BR', { maximumFractionDigits: digits, minimumFractionDigits: digits })
 const norm = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[,;._-]/g, ' ').toLowerCase().replace(/\s+/g, ' ').trim()
 
@@ -42,24 +50,21 @@ const blockInvalidChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
 
 const getAutoSlot = (date = new Date()): Slot => {
   const hour = date.getHours()
-  if (hour < 11) return 'Café / Merenda'
+  if (hour < 11) return 'Merenda da Escola'
   if (hour >= 11 && hour < 15) return 'Almoço'
   if (hour >= 15 && hour < 19) return 'Pré-Treino'
-  return 'Jantar'
+  return 'Jantar Único'
 }
 
 function App() {
   "use no memo"
   const [store, setStore] = useState<Store>(safeRead)
   const [today] = useState(() => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}` })
-  const [todayNumber] = useState(() => Number(today.slice(8, 10)))
   const [foods, setFoods] = useState<Food[]>([])
-  const [page, setPage] = useState<'Hoje' | 'Comida' | 'Movimento' | 'Treinos' | 'Evolução' | 'Avaliação' | 'Rotina'>('Hoje')
+  const [page, setPage] = useState<'Hoje' | 'Comida' | 'Movimento' | 'Treinos' | 'Evolução' | 'Avaliação' | 'Rotina' | 'Configurações'>('Hoje')
   const [slot, setSlot] = useState<Slot>(getAutoSlot)
   const [search, setSearch] = useState('')
   const [grams, setGrams] = useState<Record<number, number>>({})
-  const [tray, setTray] = useState<Item[]>([])
-  const [trayOpen, setTrayOpen] = useState(false)
   const [trainingGroup, setTrainingGroup] = useState<'A'|'B'|'C'>('A')
   const [newExercise, setNewExercise] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -69,27 +74,76 @@ function App() {
   const [bikeDialog, setBikeDialog] = useState(false)
   const [customKm, setCustomKm] = useState('')
   const [customMinutes, setCustomMinutes] = useState('')
+  const [customWaterMl, setCustomWaterMl] = useState('')
+  const [onlineProducts, setOnlineProducts] = useState<Food[]>([])
+  const [onlineLoading, setOnlineLoading] = useState(false)
+  const [onlineMessage, setOnlineMessage] = useState('')
+
+  // Cronômetro de Descanso (Treinos)
+  const [restSeconds, setRestSeconds] = useState(0)
+  const [restTotal, setRestTotal] = useState(90)
+  const [restRunning, setRestRunning] = useState(false)
+
+  // Exercício selecionado para o gráfico de progressão (Hevy style)
+  const [selectedExerciseName, setSelectedExerciseName] = useState('')
 
   useEffect(() => { let cancelled=false; fetch('/data/TACO.json').then((r) => { if (!r.ok) throw new Error('TACO indisponível'); return r.json() }).then((data: Food[]) => { if(!cancelled)setFoods(data) }).catch(() => { if(!cancelled)setToast('Não foi possível carregar data/TACO.json.') }); return ()=>{cancelled=true} }, [])
   useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(store)) } catch { console.error('localStorage unavailable or full') } }, [store])
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(''), 4000); return () => window.clearTimeout(timer) }, [toast])
+
+  useEffect(() => {
+    if (!restRunning || restSeconds <= 0) return
+    const timer = window.setInterval(() => {
+      setRestSeconds((prev) => {
+        if (prev <= 1) {
+          setRestRunning(false)
+          setToast('Tempo de descanso finalizado! Próxima série.')
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [restRunning, restSeconds])
+
   const notify = (text: string) => setToast(text)
+
+  const startRestTimer = (seconds: number) => {
+    setRestTotal(seconds)
+    setRestSeconds(seconds)
+    setRestRunning(true)
+  }
 
   const meals = store.meals.filter((meal) => meal.date === today)
   const packagedSeed = useMemo<Food[]>(() => {
-    const products: Array<[string, number, number, number?]> = [['Doritos',510,7],['Cheetos',530,6],['Coca-Cola normal',42,0],['Coca-Cola Zero',0,0],['Chocolate Bis',500,6],['Whey Protein',400,75],['Iogurte Natural',60,3.5],['Magic Toast Cacau',11,0,11],['Batata Frita',312,3.4]]
-    return products.filter(([name])=>!store.customFoods.some(food=>food.description===name)).map(([name,kcal,protein,unitKcal],index)=>({id:-1000-index,description:name,category:'Produto · estimativa editável',energy_kcal:kcal,protein_g:protein,source:'Estimativa',unitKcal}))
+    const products: Array<[string, number, number, number, number, number?]> = [
+      ['Doritos Queijo Nacho',500,6.8,58,26],['Doritos',510,7,58,27],['Cheetos Requeijão',488,6.4,62,23],['Cheetos',530,6,57,33],['Ruffles Original',540,6,50,35],['Fandangos Presunto',468,6.4,66,19],
+      ['Chocolate Bis (Lacta)',506,5.7,63,25],['KitKat 4 Fingers',518,6.5,62,27],['Snickers',488,8.6,60,23],
+      ['Whey Protein Concentrado (Growth)',406,76,10,6.6],['Whey Protein 100% (Max Titanium)',393,70,15,5.5],['Barrinha de Proteína (Média)',375,30,38,11],
+      ['Pasta de Amendoim Integral',595,28,18,46],['Pão de Forma Tradicional (Pullman)',252,8.6,48,2.6],['Pão de Forma Integral',246,11,41,3.8],
+      ['Queijo Mussarela',330,22,3,25],['Queijo Prato',360,23,2,29],['Requeijão Cremoso',257,9.6,3.3,23],['Requeijão Light',173,13,4,12],
+      ['Iogurte Natural Integral',61,3.5,4.7,3.3],['Iogurte Grego Tradicional',115,5.2,13,4.8],['Leite Condensado',321,7.8,55,8],
+      ['Nescau em Pó',380,3.8,85,2.5],['Toddy em Pó',395,3,88,2.8],['Aveia em Flocos',394,14,67,8.5],
+      ['Coca-Cola Normal (por 100ml)',42,0,10.6,0],['Coca-Cola Zero (por 100ml)',0,0,0,0],['Monster Energy (por 100ml)',47,0,12,0],['Red Bull (por 100ml)',45,0,11,0],
+      ['Magic Toast Cacau (por unidade)',11,0.3,2.1,0.1,11],['Batata Frita (Fast Food)',312,3.4,41,15],
+    ]
+    return products.filter(([name])=>!store.customFoods.some(food=>food.description===name)).map(([name,kcal,protein,carbs,fat,unitKcal],index)=>({id:-1000-index,description:name,category:'Mercado · rótulo padrão',energy_kcal:kcal,protein_g:protein,carbohydrate_g:carbs,lipid_g:fat,source:'Estimativa',unitKcal}))
   }, [store.customFoods])
-  const allFoods = useMemo(() => [...store.customFoods, ...packagedSeed, ...foods], [store.customFoods, packagedSeed, foods])
+  const allFoods = useMemo(() => [...store.customFoods, ...packagedSeed, ...onlineProducts, ...foods], [store.customFoods, packagedSeed, onlineProducts, foods])
+  const slotMatches = (meal: Meal, target: Slot) => meal.slot === target || (target === 'Merenda da Escola' && meal.slot === 'Café / Merenda') || (target === 'Jantar Único' && meal.slot === 'Jantar')
+  const selectedMeal = meals.find((meal) => slotMatches(meal, slot))
+  const selectedMealCalories = selectedMeal?.items.reduce((sum, item) => sum + (item.kcal ?? 0), 0) ?? 0
   const activities = store.activities.filter((activity) => activity.date === today)
   const eaten = meals.flatMap((meal) => meal.items)
   const calories = eaten.reduce((sum, item) => sum + (item.kcal ?? 0), 0)
   const protein = eaten.reduce((sum, item) => sum + (item.protein ?? 0), 0)
+  const carbsTotal = eaten.reduce((sum, item) => sum + (item.carbs ?? 0), 0)
+  const fatTotal = eaten.reduce((sum, item) => sum + (item.fat ?? 0), 0)
   const water = store.water[today] ?? 0
   const comparison = store.comparisonConfirmed && store.comparison !== null ? store.comparison - calories : null
   const query = norm(search)
   const matches = useMemo(() => {
-    if (!query) return allFoods.slice(0, 8)
+    if (!query) return allFoods.slice(0, 12)
     const terms = query.split(' ').filter(Boolean)
     return allFoods.map((food) => {
       const name = norm(food.description)
@@ -98,44 +152,39 @@ function App() {
     }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.food.description.localeCompare(b.food.description, 'pt-BR')).slice(0, 40).map((entry) => entry.food)
   }, [allFoods, query])
 
-  function addFood(food: Food, amount?: number) {
-    const chosen = amount ?? grams[food.id] ?? 100
-    const cleanAmount = sanitizeNumber(chosen, 0, 9999)
+  function addFoodDirect(food: Food, amount?: number) {
+    const cleanAmount = sanitizeNumber(amount ?? grams[food.id] ?? (food.unitKcal ? 1 : 100), 0, 9999)
     if (cleanAmount <= 0) { notify('Informe gramas maiores que zero.'); return }
     const kcal = numeric(food.energy_kcal), proteinBase = numeric(food.protein_g), carbs = numeric(food.carbohydrate_g), fat = numeric(food.lipid_g)
     const item: Item = { id: crypto.randomUUID(), foodId: food.id, name: food.description, grams: cleanAmount, source: food.source ?? 'TACO', ...(kcal === null ? {} : { kcal: food.unitKcal ? food.unitKcal * cleanAmount : kcal * cleanAmount / 100 }), ...(proteinBase === null ? {} : { protein: proteinBase * cleanAmount / 100 }), ...(carbs === null ? {} : { carbs: carbs * cleanAmount / 100 }), ...(fat === null ? {} : { fat: fat * cleanAmount / 100 }) }
-    setTray((current) => [...current, item]); setTrayOpen(true)
-    notify(`${food.description} · ${format(cleanAmount)} g na bandeja`)
-  }
-
-  function confirmMeal() {
-    if (!tray.length) { notify('Adicione alimentos à bandeja primeiro.'); return }
-    const currentSlot = SLOTS.find((entry) => entry.name === slot)
-    const timeNow = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    const time = SLOTS.find((entry) => entry.name === slot)?.time ?? 'Livre'
     setStore((current) => {
-      const existing = current.meals.find((meal) => meal.date === today && meal.slot === slot)
-      return existing ? { ...current, meals: current.meals.map((meal) => meal.id === existing.id ? { ...meal, items: [...meal.items, ...tray] } : meal) } : { ...current, meals: [...current.meals, { id: crypto.randomUUID(), slot, time: currentSlot?.time ?? timeNow, date: today, items: tray }] }
+      const existing = current.meals.find((meal) => meal.date === today && slotMatches(meal, slot))
+      return existing ? { ...current, meals: current.meals.map((meal) => meal.id === existing.id ? { ...meal, items: [...meal.items, item] } : meal) } : { ...current, meals: [...current.meals, { id: crypto.randomUUID(), slot, time: time === 'Livre' ? new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : time, date: today, items: [item] }] }
     })
-    notify(`Refeição (${slot}) confirmada · ${tray.length} itens`); setTray([]); setTrayOpen(false); setPage('Hoje'); window.scrollTo({top:0,behavior:'instant'})
+    notify(`${food.description} (${format(cleanAmount)}g) adicionado em ${slot}!`)
   }
 
   function addCombo(combo: Store['combos'][number]) {
     const items = combo.items.flatMap((part) => {
-      const food = [...foods, ...store.customFoods].find((entry) => entry.id === part.foodId)
+      const food = allFoods.find((entry) => entry.id === part.foodId)
       if (!food) return []
       const kcal = numeric(food.energy_kcal), prot = numeric(food.protein_g), carbs=numeric(food.carbohydrate_g),fat=numeric(food.lipid_g)
       return [{ id: crypto.randomUUID(), foodId: food.id, name: food.description, grams: part.grams, ...(kcal === null ? {} : { kcal: food.unitKcal ? food.unitKcal * part.grams : kcal * part.grams / 100 }), ...(prot === null ? {} : { protein: prot * part.grams / 100 }),...(carbs===null?{}:{carbs:carbs*part.grams/100}),...(fat===null?{}:{fat:fat*part.grams/100}) }]
     })
-    if (!items.length) { notify('Os alimentos do combo não estão na base TACO.'); return }
-    setTray((current)=>[...current,...items]); setTrayOpen(true); notify(`Combo “${combo.name}” adicionado à bandeja.`)
+    if (!items.length) { notify('Os alimentos do combo não foram encontrados.'); return }
+    const time = SLOTS.find((entry) => entry.name === slot)?.time ?? 'Livre'
+    setStore((current) => { const existing = current.meals.find((meal) => meal.date === today && slotMatches(meal, slot)); return existing ? { ...current, meals: current.meals.map((meal) => meal.id === existing.id ? { ...meal, items: [...meal.items, ...items] } : meal) } : { ...current, meals: [...current.meals, { id: crypto.randomUUID(), slot, time: time === 'Livre' ? new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : time, date: today, items }] } })
+    notify(`Combo “${combo.name}” adicionado em ${slot}!`)
   }
 
   function saveCombo() {
-    const selected = Object.entries(grams).filter(([, amount]) => amount > 0)
-    if (selected.length < 2) { notify('Escolha ao menos dois alimentos e ajuste as quantidades.'); return }
+    const existing = meals.find((meal) => slotMatches(meal, slot))
+    const selected = existing?.items ?? []
+    if (selected.length < 1) { notify('Adicione pelo menos um item à refeição antes de salvar o combo.'); return }
     const name = window.prompt('Nome do combo')?.trim()
     if (!name) return
-    setStore((current) => ({ ...current, combos: [...current.combos, { id: crypto.randomUUID(), name, items: selected.map(([id, amount]) => ({ foodId: Number(id), grams: amount })) }] }))
+    setStore((current) => ({ ...current, combos: [...current.combos, { id: crypto.randomUUID(), name, items: selected.map((item) => ({ foodId: item.foodId, grams: item.grams })) }] }))
     notify('Combo salvo neste dispositivo.')
   }
 
@@ -163,6 +212,88 @@ function App() {
   const waterAverage = monthWaterDays.length ? monthWaterDays.reduce((sum, [, amount]) => sum + amount, 0) / monthWaterDays.length : 0
   const comparisonPrevious = store.measures.slice().sort((a, b) => a.date.localeCompare(b.date)).slice(-2)
   const status = water < store.waterReference ? `Faltam ${format(store.waterReference-water)} ml de água para sua referência de hoje` : protein > 0 ? `Você já registrou ${format(protein,1)} g de proteína hoje` : activities.some((item)=>item.kind==='Academia'&&item.done) ? 'Treino registrado · confira suas refeições de hoje' : 'Treino do dia ainda pendente'
+
+  const getActivityForDate = useMemo(() => (dateStr: string): DayActivityData => {
+    const dayMeals = store.meals.filter((meal) => meal.date === dateStr)
+    const totalKcal = dayMeals.flatMap((meal) => meal.items).reduce((sum, item) => sum + (item.kcal ?? 0), 0)
+    const dayActivities = store.activities.filter((activity) => activity.date === dateStr && activity.done)
+    return {
+      workoutDone: store.trainings.some((training) => training.date === dateStr) || dayActivities.some((activity) => activity.kind === 'Academia'),
+      nutritionDone: totalKcal > 0,
+      waterDone: (store.water[dateStr] ?? 0) >= store.waterReference,
+      bikeDone: dayActivities.some((activity) => activity.kind === 'Bike'),
+    }
+  }, [store.meals, store.water, store.waterReference, store.activities, store.trainings])
+
+  const streakCount = (() => {
+    const hasActivity = (dateStr: string) => {
+      const activity = getActivityForDate(dateStr)
+      return activity.workoutDone || activity.nutritionDone || activity.waterDone || activity.bikeDone
+    }
+    let count = 0
+    const cursor = new Date(`${today}T12:00:00`)
+    while (hasActivity(localDate(cursor))) { count += 1; cursor.setDate(cursor.getDate() - 1) }
+    return count
+  })()
+
+  // Todos os nomes de exercícios existentes nas fichas e histórico
+  const allExerciseNames = useMemo(() => {
+    const names = new Set<string>()
+    ;(['A', 'B', 'C'] as const).forEach((g) => store.exercises[g].forEach((e) => names.add(e.name)))
+    store.trainings.forEach((t) => t.exercises.forEach((e) => names.add(e.name)))
+    return Array.from(names)
+  }, [store.exercises, store.trainings])
+
+  const activeExerciseName = selectedExerciseName || allExerciseNames[0] || ''
+
+  // Dados do Gráfico de Progressão de Carga e Volume (Hevy style)
+  const exerciseProgression = useMemo(() => {
+    if (!activeExerciseName) return []
+    const points: Array<{ date: string; label: string; maxWeight: number; volume: number }> = []
+    const sorted = store.trainings.slice().sort((a, b) => a.date.localeCompare(b.date))
+    sorted.forEach((t) => {
+      const match = t.exercises.find((e) => norm(e.name) === norm(activeExerciseName))
+      if (!match) return
+      let maxWeight = 0
+      let volume = 0
+      match.sets.forEach((s) => {
+        const w = s.weight ?? 0
+        const r = s.reps ?? 0
+        if (w > maxWeight) maxWeight = w
+        volume += w * r
+      })
+      if (maxWeight > 0 || volume > 0) {
+        points.push({
+          date: t.date,
+          label: t.date.slice(5).split('-').reverse().join('/'),
+          maxWeight,
+          volume,
+        })
+      }
+    })
+    return points
+  }, [store.trainings, activeExerciseName])
+
+  // Dados dos últimos 7 dias de Nutrição (Calorias e Proteína)
+  const last7DaysNutrition = useMemo(() => {
+    const base = new Date(`${today}T12:00:00`)
+    const labels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+    return Array.from({ length: 7 }, (_, idx) => {
+      const d = new Date(base)
+      d.setDate(base.getDate() - (6 - idx))
+      const iso = localDate(d)
+      const items = store.meals.filter((m) => m.date === iso).flatMap((m) => m.items)
+      const kcal = items.reduce((s, i) => s + (i.kcal ?? 0), 0)
+      const prot = items.reduce((s, i) => s + (i.protein ?? 0), 0)
+      return {
+        iso,
+        dayLabel: labels[d.getDay()],
+        dayNum: d.getDate(),
+        kcal,
+        prot,
+      }
+    })
+  }, [store.meals, today])
 
   function saveBike(km: number, minutes: number, label: string) {
     const cleanKm = sanitizeNumber(km, 0, 999)
@@ -194,14 +325,16 @@ function App() {
 
   function finishWorkout() {
     setStore((current) => ({ ...current, trainings: [...current.trainings, { id: crypto.randomUUID(), date: today, group: trainingGroup, exercises: current.exercises[trainingGroup].map((exercise) => ({ exerciseId: exercise.id, name: exercise.name, sets: exercise.sets })) }], activities: [...current.activities, { id: crypto.randomUUID(), kind: 'Academia', date: today, done: true }] }))
-    notify(`Treino ${trainingGroup} salvo.`)
+    notify(`Treino ${trainingGroup} salvo com sucesso!`)
   }
 
   function saveCustomFood() {
     const name = window.prompt('Nome do alimento/produto')?.trim(); if (!name) return
     const kcal = sanitizeNumber(window.prompt('kcal por 100 g (ou por unidade para Magic Toast)') || 0, 0, 9999)
     const proteinValue = sanitizeNumber(window.prompt('Proteína em g por 100 g (opcional)') || 0, 0, 9999)
-    const food: Food = { id: -Date.now(), description: name, category: 'Personalizado · valor informado', energy_kcal: kcal, protein_g: proteinValue, source: 'Estimativa' }
+    const carbs = sanitizeNumber(window.prompt('Carboidratos em g por 100 g (opcional)') || 0, 0, 9999)
+    const fat = sanitizeNumber(window.prompt('Gorduras em g por 100 g (opcional)') || 0, 0, 9999)
+    const food: Food = { id: -Date.now(), description: name, category: 'Personalizado · valor informado', energy_kcal: kcal, protein_g: proteinValue, carbohydrate_g: carbs, lipid_g: fat, source: 'Estimativa' }
     setStore((current) => ({ ...current, customFoods: [...current.customFoods, food] })); setSearch(name); notify('Alimento personalizado salvo.')
   }
 
@@ -212,107 +345,199 @@ function App() {
     if (!file) return; const reader = new FileReader(); reader.onload = () => { try { const parsed = JSON.parse(String(reader.result)); if (!parsed || !Array.isArray(parsed.meals)) throw new Error('invalid'); setStore({ ...empty, ...parsed, exercises: { ...initialExercises(), ...parsed.exercises } }); notify('Backup importado.') } catch { notify('Arquivo de backup inválido.') } }; reader.readAsText(file)
   }
 
+  async function searchOpenFoodFacts() {
+    const term = search.trim()
+    if (term.length < 2) return
+    setOnlineLoading(true); setOnlineMessage('Consultando catálogo Open Food Facts Brasil…')
+    try {
+      const endpoints = [
+        `https://br.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(term)}&search_simple=1&action=process&json=1&page_size=12`,
+        `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(term)}&country=brazil&search_simple=1&action=process&json=1&page_size=12`
+      ]
+      let data: { products?: Array<{ product_name?: string; brands?: string; code?: string; nutriments?: Record<string, unknown> }> } | null = null
+      for (const url of endpoints) {
+        try {
+          const res = await fetch(url, { headers: { Accept: 'application/json' } })
+          if (res.ok) {
+            data = await res.json()
+            if (data?.products?.length) break
+          }
+        } catch {
+          // tenta próximo endpoint
+        }
+      }
+      if (!data) throw new Error('Indisponível')
+      const products = (data.products ?? []).flatMap((product, index) => {
+        const nutriments = product.nutriments ?? {}
+        const kcal = numeric(nutriments['energy-kcal_100g'] ?? nutriments['energy-kcal'])
+        const proteinValue = numeric(nutriments.proteins_100g ?? nutriments.proteins)
+        const carbs = numeric(nutriments.carbohydrates_100g ?? nutriments.carbohydrates)
+        const fat = numeric(nutriments.fat_100g ?? nutriments.fat)
+        const name = product.product_name?.trim()
+        if (!name) return []
+        return [{ id: -(50000 + index), description: `${name}${product.brands ? ` (${product.brands.split(',')[0]})` : ''}`, category: `Mercado Online${product.code ? ` · EAN ${product.code}` : ''}`, energy_kcal: kcal ?? undefined, protein_g: proteinValue ?? undefined, carbohydrate_g: carbs ?? undefined, lipid_g: fat ?? undefined, source: 'Mercado Online' as const }]
+      })
+      setOnlineProducts(products)
+      setOnlineMessage(products.length ? `${products.length} produtos encontrados no catálogo online!` : 'Nenhum produto extra encontrado online. Você pode criar um personalizado abaixo.')
+    } catch {
+      setOnlineMessage('O servidor do Open Food Facts está temporariamente lento. Os produtos de mercado locais já estão inclusos na busca abaixo!')
+    } finally { setOnlineLoading(false) }
+  }
+
+  function addWater(amount: number) {
+    const safeAmount = sanitizeNumber(amount, 0, 5000)
+    if (!safeAmount) return
+    setStore((current) => ({ ...current, water: { ...current.water, [today]: Math.min(12000, (current.water[today] ?? 0) + safeAmount) } }))
+    notify(`+${safeAmount} ml de água registrados.`)
+  }
+
   return <div className="app-shell">
     <header className="topbar">
-<div className="brand-mark">K</div>
-<div>
-<span className="brand-name">KAKE</span>
-<span className="brand-caption">SEU DIÁRIO PESSOAL</span>
-</div>
-<button className="icon-button" aria-label="Configurações" onClick={() => setPage('Rotina')}>⚙</button>
-</header>
+      <div className="brand-mark">K</div>
+      <div>
+        <span className="brand-name">KAKE</span>
+        <span className="brand-caption">SEU DIÁRIO PESSOAL</span>
+      </div>
+      <button className={`icon-button ${page === 'Configurações' ? 'active-gear' : ''}`} aria-label="Configurações" title="Configurações" onClick={() => setPage('Configurações')}>⚙</button>
+    </header>
+
     <main className="main-content">
       {page === 'Hoje' && <>
         <div className="page-heading">
-<div>
-<div className="eyebrow">{new Date(`${today}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
-<h1>Seu dia, até agora</h1>
-</div>
-<span className="live-dot">● HOJE</span>
-</div>
-        <section className="status-card">
-<span className="status-mark">◷</span>
-<div>
-<span className="eyebrow">STATUS DO DIA</span>
-<b>{status}</b>
-</div>
-</section>
-        
-        {/* Metas & Resumo de Energia */}
-        <section className="card energy-card">
-          <div className="card-heading">
-<div>
-<span className="eyebrow">ENERGIA · REGISTRO</span>
-<h2>Consumo e movimento</h2>
-</div>
-<span className="icon-orb">↗</span>
-</div>
-          <div className="energy-grid">
-            <div className="energy-metric">
-<span>Consumido hoje</span>
-<strong>{format(calories)} <small>kcal</small>
-</strong>
-</div>
-            <div className="energy-metric">
-<span>Proteína registrada</span>
-<strong>{format(protein, 1)} <small>g</small>
-</strong>
-</div>
+          <div>
+            <div className="eyebrow">{new Date(`${today}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+            <h1>Seu dia, até agora</h1>
           </div>
-          {comparison !== null && <div className="comparison-result">
-<div className="row">
-<span>Parâmetro comparativo</span>
-<b>{format(store.comparison!)} kcal</b>
-</div>
-<div className="progress">
-<i style={{ width: `${Math.min(100, calories / store.comparison! * 100)}%` }} />
-</div>
-<div className="row remaining-row">
-<span>Diferença aritmética</span>
-<strong>{format(comparison)} kcal</strong>
-</div>
-</div>}
-          <div className="movement-line">
-<span className="movement-icon">⌁</span>
-<span>Movimento registrado</span>
-<strong>{activities.filter((item) => item.done).length} atividades</strong>
-</div>
-          <details className="comparison-settings">
-<summary>{comparison === null ? '＋ Configurar parâmetro comparativo' : 'Editar parâmetro comparativo'}</summary>
-<div className="comparison-form">
-<label htmlFor="comparison">Parâmetro numérico (kcal)</label>
-<input id="comparison" type="number" min="0" max="99999" onKeyDown={blockInvalidChars} inputMode="numeric" placeholder="Vazio por padrão" value={comparisonInput || (comparison !== null ? String(store.comparison) : '')} onChange={(event) => setComparisonInput(event.target.value)} />
-<label className="checkline">
-<input type="checkbox" checked={professionalConfirmed} onChange={(event) => setProfessionalConfirmed(event.target.checked)} /> Valor indicado por profissional de saúde.</label>
-<div className="form-actions">
-<button className="button-primary compact" onClick={saveComparison}>Salvar</button>{comparison !== null && <button className="button-quiet" onClick={() => { setStore((current) => ({ ...current, comparison: null, comparisonConfirmed: false })); setComparisonInput('') }}>Remover</button>}</div>
-</div>
-</details>
+          <span className="live-dot">● HOJE</span>
+        </div>
+
+        <section className="status-card">
+          <span className="status-mark">◷</span>
+          <div>
+            <span className="eyebrow">STATUS DO DIA</span>
+            <b>{status}</b>
+          </div>
         </section>
 
-        {/* Hidratação & Creatina */}
+        <ConsistencySection
+          currentDateStr={today}
+          getActivityForDate={getActivityForDate}
+          streakCount={streakCount}
+          weeklyGoalTarget={5}
+          onSelectDate={(dateStr) => {
+            if (dateStr !== today) {
+              setPage('Evolução')
+              window.scrollTo({ top: 0, behavior: 'instant' })
+            }
+          }}
+        />
+        
+        {/* Metas & Resumo de Energia e Macros */}
+        <section className="card energy-card">
+          <div className="card-heading">
+            <div>
+              <span className="eyebrow">ENERGIA & MACROS · HOJE</span>
+              <h2>Consumo e movimento</h2>
+            </div>
+            <span className="icon-orb">↗</span>
+          </div>
+          <div className="energy-grid">
+            <div className="energy-metric">
+              <span>Consumido hoje</span>
+              <strong>{format(calories)} <small>kcal</small></strong>
+            </div>
+            <div className="energy-metric">
+              <span>Proteína registrada</span>
+              <strong>{format(protein, 1)} <small>g</small></strong>
+            </div>
+          </div>
+          <div className="macros-mini-row">
+            <span>Carboidratos: <b>{format(carbsTotal, 1)} g</b></span>
+            <span>Gorduras: <b>{format(fatTotal, 1)} g</b></span>
+          </div>
+          {comparison !== null && <div className="comparison-result">
+            <div className="row">
+              <span>Parâmetro comparativo</span>
+              <b>{format(store.comparison!)} kcal</b>
+            </div>
+            <div className="progress">
+              <i style={{ width: `${Math.min(100, calories / store.comparison! * 100)}%` }} />
+            </div>
+            <div className="row remaining-row">
+              <span>Diferença aritmética</span>
+              <strong>{format(comparison)} kcal</strong>
+            </div>
+          </div>}
+          <div className="movement-line">
+            <span className="movement-icon">⌁</span>
+            <span>Movimento registrado</span>
+            <strong>{activities.filter((item) => item.done).length} atividades</strong>
+          </div>
+          <details className="comparison-settings">
+            <summary>{comparison === null ? '＋ Configurar parâmetro comparativo' : 'Editar parâmetro comparativo'}</summary>
+            <div className="comparison-form">
+              <label htmlFor="comparison">Parâmetro numérico (kcal)</label>
+              <input id="comparison" type="number" min="0" max="99999" onKeyDown={blockInvalidChars} inputMode="numeric" placeholder="Vazio por padrão" value={comparisonInput || (comparison !== null ? String(store.comparison) : '')} onChange={(event) => setComparisonInput(event.target.value)} />
+              <label className="checkline">
+                <input type="checkbox" checked={professionalConfirmed} onChange={(event) => setProfessionalConfirmed(event.target.checked)} /> Valor indicado por profissional de saúde.
+              </label>
+              <div className="form-actions">
+                <button className="button-primary compact" onClick={saveComparison}>Salvar</button>
+                {comparison !== null && <button className="button-quiet" onClick={() => { setStore((current) => ({ ...current, comparison: null, comparisonConfirmed: false })); setComparisonInput('') }}>Remover</button>}
+              </div>
+            </div>
+          </details>
+        </section>
+
+        {/* Hidratação + Botão Compacto de Creatina no canto superior direito */}
         <section className="card water-card">
-<div className="card-heading">
-<div>
-<span className="eyebrow">HIDRATAÇÃO · REGISTRO</span>
-<h2>{format(water / 1000, 1)} <small>/ {format(store.waterReference / 1000, 1)} L</small>
-</h2>
-</div>
-<span className="water-icon">◉</span>
-</div>
-<div className="progress water-progress">
-<i style={{ width: `${Math.min(100, water / Math.max(store.waterReference, 1) * 100)}%` }} />
-</div>
-<button className="button-primary water-button" onClick={() => setStore((current) => ({ ...current, water: { ...current.water, [today]: water + 500 } }))}>＋ 500 ml · 1 garrafinha</button>
-</section>
-        <section className="card habit-card">
-<div className="row">
-<span className="habit-icon">✳</span>
-<b>Creatina 5 g</b>
-<button className={`check-box ${store.creatine[today] ? 'checked' : ''}`} aria-label="Tomar Creatina 5g" onClick={() => setStore((current) => ({ ...current, creatine: { ...current.creatine, [today]: !current.creatine[today] } }))}>{store.creatine[today] ? '✓' : ''}</button>
-<span className="supporting-text">{store.creatine[today] ? 'Tomada' : 'Registrar'}</span>
-</div>
-</section>
+          <div className="card-heading">
+            <div>
+              <span className="eyebrow">HIDRATAÇÃO · REGISTRO</span>
+              <h2>{format(water / 1000, 2)} <small>/ {format(store.waterReference / 1000, 1)} L ({water} ml)</small></h2>
+            </div>
+            <div className="water-actions">
+              <button
+                type="button"
+                className={`creatine-pill ${store.creatine[today] ? 'creatine-pill-active' : ''}`}
+                aria-pressed={Boolean(store.creatine[today])}
+                onClick={() => {
+                  const next = !store.creatine[today]
+                  setStore((current) => ({ ...current, creatine: { ...current.creatine, [today]: next } }))
+                  notify(next ? 'Creatina 5g marcada hoje!' : 'Creatina desmarcada.')
+                }}
+              >
+                <span className="creatine-check">{store.creatine[today] ? '✓' : ''}</span>
+                <span>Creatina 5g</span>
+              </button>
+            </div>
+          </div>
+          <div className="progress water-progress">
+            <i style={{ width: `${Math.min(100, water / Math.max(store.waterReference, 1) * 100)}%` }} />
+          </div>
+          <div className="water-controls-grid">
+            <button type="button" className="button-primary water-button" onClick={() => addWater(500)}>＋ 500 ml · Garrafinha</button>
+            <button type="button" className="button-primary water-button secondary-water" onClick={() => addWater(250)}>＋ 250 ml · Copo</button>
+          </div>
+          <div className="water-Secondary-row">
+            <form className="water-custom-form" onSubmit={(event) => { event.preventDefault(); addWater(Number(customWaterMl)); setCustomWaterMl('') }}>
+              <input aria-label="Quantidade personalizada de água em ml" type="number" min="1" max="5000" step="1" placeholder="Outro valor (ml)..." value={customWaterMl} onChange={(event) => setCustomWaterMl(event.target.value)} onKeyDown={blockInvalidChars}/>
+              <button className="button-quiet" type="submit">＋ Somar</button>
+            </form>
+            <button
+              type="button"
+              className="button-quiet water-correction"
+              disabled={water === 0}
+              title="Diminuir 250 ml caso tenha clicado por engano"
+              onClick={() => {
+                setStore((current) => ({ ...current, water: { ...current.water, [today]: Math.max(0, (current.water[today] ?? 0) - 250) } }))
+                notify('−250 ml corrigido.')
+              }}
+            >
+              − 250 ml
+            </button>
+          </div>
+        </section>
 
         {/* Ações Rápidas */}
         <div className="quick-actions-bar">
@@ -335,9 +560,9 @@ function App() {
         {/* Lista de Alimentos Consumidos Aberta e Visível */}
         <div className="section-heading">
           <div>
-<span className="eyebrow">ALIMENTOS CONSUMIDOS HOJE</span>
-<h2>Refeições do dia ({eaten.length})</h2>
-</div>
+            <span className="eyebrow">ALIMENTOS CONSUMIDOS HOJE</span>
+            <h2>Refeições do dia ({eaten.length})</h2>
+          </div>
           <button className="button-quiet" onClick={() => { setSlot(getAutoSlot()); setPage('Comida'); }}>+ Adicionar</button>
         </div>
 
@@ -365,21 +590,17 @@ function App() {
                           <span className="grams-pill">{format(item.grams)} g</span>
                         </div>
                         <div className="macro-badge">
-                          <span className="macro-kcal">🔥 <b>{item.kcal == null ? 'n/d' : `${format(item.kcal)} kcal`}</b>
-</span>
+                          <span className="macro-kcal"><b>{item.kcal == null ? 'n/d' : `${format(item.kcal)} kcal`}</b></span>
                           <span className="macro-sep">·</span>
-                          <span title="Proteínas">P: <b>{item.protein == null ? '0' : format(item.protein, 1)}g</b>
-</span>
+                          <span title="Proteínas">P: <b>{item.protein == null ? '0' : format(item.protein, 1)}g</b></span>
                           <span className="macro-sep">·</span>
-                          <span title="Carboidratos">C: <b>{item.carbs == null ? '0' : format(item.carbs, 1)}g</b>
-</span>
+                          <span title="Carboidratos">C: <b>{item.carbs == null ? '0' : format(item.carbs, 1)}g</b></span>
                           <span className="macro-sep">·</span>
-                          <span title="Gorduras">G: <b>{item.fat == null ? '0' : format(item.fat, 1)}g</b>
-</span>
+                          <span title="Gorduras">G: <b>{item.fat == null ? '0' : format(item.fat, 1)}g</b></span>
                         </div>
                       </div>
                       <button className="delete-btn" title={`Excluir ${item.name}`} aria-label={`Excluir ${item.name}`} onClick={() => { removeMealItem(meal.id, item.id); notify(`${item.name} removido.`); }}>
-                        🗑️
+                        ×
                       </button>
                     </div>
                   ))}
@@ -393,88 +614,88 @@ function App() {
       {page === 'Comida' && <>
         <div className="page-heading">
           <div>
-<div className="eyebrow">REGISTRO RÁPIDO · BASE TACO</div>
-<h1>Montar refeição</h1>
-</div>
+            <div className="eyebrow">ADIÇÃO EM 1 CLIQUE · TACO + MERCADO</div>
+            <h1>Adicionar alimento</h1>
+          </div>
           <span className="badge">{allFoods.length} itens</span>
         </div>
 
-        {/* Tagueamento da Refeição: Pré-seleção automática baseada no horário atual */}
+        {/* Tagueamento da Refeição + Resumo Compacto sem Bandeja Gigante */}
         <div className="card slot-card">
           <div className="slot-header-line">
-            <span className="eyebrow">TAG DA REFEIÇÃO</span>
-            <span className="auto-pill">Detectado: {getAutoSlot()}</span>
+            <span className="eyebrow">REFEIÇÃO DE DESTINO</span>
+            <span className="auto-pill">Auto: {getAutoSlot()}</span>
           </div>
           <div className="slot-control-row">
             <select id="meal-slot" className="select-input" value={slot} onChange={(event) => setSlot(event.target.value as Slot)}>
               {SLOTS.map((entry) => <option key={entry.name} value={entry.name}>{entry.name} {entry.time !== 'Livre' ? `(${entry.time})` : ''}</option>)}
             </select>
             <button type="button" className="button-quiet" onClick={() => { const auto = getAutoSlot(); setSlot(auto); notify(`Ajustado para ${auto}`); }}>
-              🕒 Horário atual
+              Horário atual
             </button>
+          </div>
+          <div className="meal-summary-bar">
+            <div className="meal-summary-copy">
+              <b>{slot}: {selectedMeal?.items.length ?? 0} {(selectedMeal?.items.length ?? 0) === 1 ? 'item' : 'itens'}</b>
+              <small>{format(selectedMealCalories)} kcal acumulados nesta refeição hoje</small>
+            </div>
+            <div className="meal-summary-actions">
+              <button type="button" className="button-quiet compact" onClick={saveCombo}>Salvar Combo</button>
+              <button type="button" className="button-primary compact" onClick={() => { setPage('Hoje'); window.scrollTo({ top: 0, behavior: 'instant' }) }}>Ver no Dia</button>
+            </div>
           </div>
         </div>
 
         <div className="search-wrap">
           <label className="search-box">
             <span>⌕</span>
-            <input aria-label="Buscar alimento" placeholder="Buscar alimento ou produto…" autoComplete="off" value={search} onChange={(event) => setSearch(event.target.value)} />
-            <kbd>TACO</kbd>
+            <input aria-label="Buscar alimento" placeholder="Ex: Arroz, Frango, Doritos, Cheetos, Whey…" autoComplete="off" value={search} onChange={(event) => setSearch(event.target.value)} />
+            {search && <button type="button" className="clear-search" onClick={() => setSearch('')}>×</button>}
           </label>
-          {query && <div className="suggestions">{matches.slice(0, 7).map((food) => <button key={food.id} onClick={() => { setSearch(food.description); document.getElementById(`food-${food.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}>{food.description}</button>)}</div>}
+          {query && <div className="suggestions">{matches.slice(0, 6).map((food) => <button key={food.id} onClick={() => { setSearch(food.description); document.getElementById(`food-${food.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}>{food.description}</button>)}</div>}
         </div>
 
-        <button className="button-quiet full-width" onClick={saveCustomFood}>＋ Criar alimento/produto personalizado</button>
+        {search.trim().length >= 2 && (
+          <button type="button" className="off-search-button" disabled={onlineLoading} onClick={searchOpenFoodFacts}>
+            {onlineLoading ? 'Consultando base Open Food Facts Brasil…' : `＋ Buscar “${search.trim()}” no catálogo extra de supermercado online`}
+          </button>
+        )}
+        {onlineMessage && <p className="online-search-status" role="status">{onlineMessage}</p>}
 
-        {/* Bandeja de Seleção */}
-        <section className={`tray-panel ${trayOpen?"tray-expanded":"tray-collapsed"}`}>
-          <div className="combo-title">
-<b>Bandeja de seleção · {tray.length}</b>
-<button className="button-quiet" onClick={()=>setTrayOpen(value=>!value)}>{trayOpen?"Recolher":"Abrir bandeja"}</button>
-</div>
-          {trayOpen && <>
-            <div className="combo-title">
-<b>Bandeja de seleção · {tray.length}</b>
-<button className="button-quiet" onClick={()=>setTray([])}>Limpar</button>
-</div>
-            {tray.map(item => (
-              <div className="food-row" key={item.id}>
-                <span>{item.name} <small>{format(item.grams)} g · {format(item.kcal??0)} kcal · {format(item.protein??0,1)} g prot</small>
-</span>
-                <button className="remove-button" aria-label={`Remover ${item.name} da bandeja`} onClick={()=>setTray(current=>current.filter(entry=>entry.id!==item.id))}>×</button>
+        <button className="button-quiet full-width" onClick={saveCustomFood}>＋ Cadastrar novo alimento ou produto pelo rótulo</button>
+
+        {/* Combos Salvos */}
+        {store.combos.length > 0 && (
+          <div className="combo-panel">
+            <div className="combo-title"><b>Meus combos rápidos (1 clique)</b></div>
+            {store.combos.map((combo) => (
+              <div className="combo-row" key={combo.id}>
+                <button onClick={() => addCombo(combo)}>
+                  <span>
+                    <b>＋ {combo.name}</b>
+                    <small>{combo.items.length} itens · adicionar direto em {slot}</small>
+                  </span>
+                </button>
+                <button className="remove-button" aria-label={`Excluir combo ${combo.name}`} onClick={() => setStore(current => ({ ...current, combos: current.combos.filter(x => x.id !== combo.id) }))}>×</button>
               </div>
             ))}
-            <button className="button-primary water-button" onClick={confirmMeal}>Confirmar refeição ({slot})</button>
-            <button className="button-quiet full-width" onClick={saveCombo}>Salvar seleção como combo</button>
-          </>}
-        </section>
+          </div>
+        )}
 
-        {/* Combos */}
-        <div className="combo-panel">
-          <div className="combo-title">
-<b>Meus combos</b>
-</div>
-          {store.combos.map((combo) => (
-            <div className="combo-row" key={combo.id}>
-              <button onClick={() => addCombo(combo)}>
-<span>
-<b>{combo.name}</b>
-<small>{combo.items.length} itens · adicionar à bandeja</small>
-</span>
-</button>
-              <button className="remove-button" aria-label={`Excluir combo ${combo.name}`} onClick={()=>setStore(current=>({...current,combos:current.combos.filter(x=>x.id!==combo.id)}))}>×</button>
-            </div>
-          ))}
-        </div>
-
-        {/* Lista de Alimentos com Validação Cirúrgica */}
+        {/* Lista de Alimentos (TACO + Mercado Local + Online) */}
         <div className="food-list">
           {matches.map((food) => (
             <article className="food-card" id={`food-${food.id}`} key={food.id}>
               <div className="food-copy">
                 <b>{food.description}</b>
                 <small>{food.category} · {food.source ?? 'TACO'}</small>
-                <small>{numeric(food.energy_kcal) === null ? 'Energia n/d' : `${format(numeric(food.energy_kcal)!)} kcal`} · {numeric(food.protein_g) === null ? 'proteína n/d' : `${format(numeric(food.protein_g)!, 1)} g`} / 100 g</small>
+                <small>
+                  {numeric(food.energy_kcal) === null ? 'Energia n/d' : `${format(numeric(food.energy_kcal)!)} kcal`}
+                  {' · '}P: {numeric(food.protein_g) === null ? 'n/d' : `${format(numeric(food.protein_g)!, 1)}g`}
+                  {' · '}C: {numeric(food.carbohydrate_g) === null ? 'n/d' : `${format(numeric(food.carbohydrate_g)!, 1)}g`}
+                  {' · '}G: {numeric(food.lipid_g) === null ? 'n/d' : `${format(numeric(food.lipid_g)!, 1)}g`}
+                  {food.unitKcal ? ' / unid' : ' / 100g'}
+                </small>
                 <div className="measure-controls">
                   {[-10, 10, 50, 100].map(delta => (
                     <button key={delta} type="button" onClick={() => setGrams(current => ({ ...current, [food.id]: Math.min(9999, Math.max(0, (current[food.id] ?? 100) + delta)) }))}>
@@ -509,205 +730,529 @@ function App() {
                   />
                   <span>g</span>
                 </label>
-                <button className="add-food-button" onClick={() => addFood(food)}>Adicionar</button>
+                <button className="add-food-button" onClick={() => addFoodDirect(food)}>＋ Adicionar</button>
               </div>
             </article>
           ))}
-          {!matches.length && <div className="empty-state">Nenhum alimento encontrado.</div>}
+          {!matches.length && <div className="empty-state">Nenhum alimento encontrado localmente. Clique no botão de busca online acima ou crie um personalizado.</div>}
         </div>
       </>}
 
       {page === 'Movimento' && <>
-<div className="page-heading">
-<div>
-<div className="eyebrow">REGISTRO PESSOAL</div>
-<h1>Movimento</h1>
-</div>
-</div>
-<div className="activity-options">{['Academia', 'Educação Física · vôlei', 'Passos · registro manual'].map((kind) => <button key={kind} className="activity-option" onClick={() => addActivity(kind)}>
-<span className="activity-check">＋</span>{kind}</button>)}<button className="activity-option" onClick={() => setBikeDialog(true)}>
-<span className="activity-check">＋</span>Registrar pedalada</button>
-</div>
-<h2 className="subheading">Atividades de hoje</h2>{activities.map((activity) => <div className="activity-row" key={activity.id}>
-<span className={`check-box ${activity.done ? 'checked' : ''}`}>{activity.done ? '✓' : ''}</span>
-<span>{activity.kind}{activity.label ? ` · ${activity.label}` : ''}{activity.km ? ` · ${format(activity.km, 1)} km` : ''}</span>
-</div>)}</>}
+        <div className="page-heading">
+          <div>
+            <div className="eyebrow">REGISTRO PESSOAL</div>
+            <h1>Movimento</h1>
+          </div>
+        </div>
+        <div className="activity-options">
+          {['Academia', 'Educação Física · vôlei', 'Passos · registro manual'].map((kind) => (
+            <button key={kind} className="activity-option" onClick={() => addActivity(kind)}>
+              <span className="activity-check">＋</span>{kind}
+            </button>
+          ))}
+          <button className="activity-option" onClick={() => setBikeDialog(true)}>
+            <span className="activity-check">＋</span>Registrar pedalada
+          </button>
+        </div>
+        <h2 className="subheading">Atividades de hoje</h2>
+        {activities.length === 0 && <div className="empty-state">Nenhuma atividade registrada hoje.</div>}
+        {activities.map((activity) => (
+          <div className="activity-row" key={activity.id}>
+            <span className={`check-box ${activity.done ? 'checked' : ''}`}>{activity.done ? '✓' : ''}</span>
+            <span>{activity.kind}{activity.label ? ` · ${activity.label}` : ''}{activity.km ? ` · ${format(activity.km, 1)} km` : ''}</span>
+          </div>
+        ))}
+      </>}
 
       {page === 'Treinos' && <>
-<div className="page-heading">
-<div>
-<div className="eyebrow">FICHAS PESSOAIS</div>
-<h1>Treino {trainingGroup}</h1>
-<p className="supporting-text">{trainingGroup==='A'?'Peito e Bíceps':trainingGroup==='B'?'Pernas':'Costas e Tríceps'}</p>
-</div>
-<button className="button-primary compact" onClick={finishWorkout}>Finalizar treino</button>
-</div>
-<div className="group-tabs">{(['A','B','C'] as const).map(group=>
-<button key={group} className={trainingGroup===group?'selected':''} onClick={()=>setTrainingGroup(group)}>Treino {group}<small>{group==='A'?'Peito e bíceps':group==='B'?'Pernas':'Costas e tríceps'}</small>
-</button>)}</div>
-<div className="add-exercise">
-<input value={newExercise} onChange={event=>setNewExercise(event.target.value)} placeholder="Nome do exercício"/>
-<button className="button-primary compact" onClick={addExercise}>Adicionar</button>
-</div>{store.exercises[trainingGroup].length===0&&<div className="empty-state">Sua ficha está vazia. Adicione os exercícios indicados pelo treinador.</div>}{store.exercises[trainingGroup].map(exercise=>{const previous=store.trainings.slice().reverse().flatMap(training=>training.exercises.filter(item=>item.exerciseId===exercise.id));return <section className="card exercise-card" key={exercise.id}>
-<div className="exercise-heading">
-<h2>{exercise.name}</h2>
-<button className="remove-button" aria-label={`Excluir ${exercise.name}`} onClick={()=>removeExercise(exercise.id)}>×</button>
-</div>
-<div className="sets-head">
-<span>Série</span>
-<span>Reps</span>
-<span>Peso kg</span>
-</div>{exercise.sets.map((set,index)=>
-<div className="set-row" key={index}>
-<span>{index+1}</span>
-<input type="number" min="0" max="999" onKeyDown={blockInvalidChars} value={set.reps} aria-label={`Série ${index+1} repetições`} onChange={event=>updateSet(exercise.id,index,'reps',sanitizeNumber(event.target.value, 0, 999))}/>
-<input type="number" min="0" max="999" step="0.5" onKeyDown={blockInvalidChars} value={set.weight??''} placeholder="—" aria-label={`Série ${index+1} peso kg`} onChange={event=>updateSet(exercise.id,index,'weight',event.target.value===''?null:sanitizeNumber(event.target.value, 0, 999))}/>
-</div>)}<button className="button-quiet" onClick={()=>addSet(exercise.id)}>＋ Adicionar série</button>{previous.length>0&&<div className="load-history">
-<b>Último treino</b>
-<small>{previous[previous.length-1].sets.map((set,index)=>`S${index+1}: ${set.reps} reps · ${set.weight??'—'} kg`).join(' / ')}</small>
-</div>}</section>})}</>}
+        <div className="page-heading">
+          <div>
+            <div className="eyebrow">FICHAS E PROGRESSÃO DE CARGA</div>
+            <h1>Treino {trainingGroup}</h1>
+            <p className="supporting-text">{trainingGroup === 'A' ? 'Peito e Bíceps' : trainingGroup === 'B' ? 'Pernas' : 'Costas e Tríceps'}</p>
+          </div>
+          <button className="button-primary compact" onClick={finishWorkout}>Concluir treino</button>
+        </div>
+
+        {/* Cronômetro de Descanso entre Séries */}
+        <section className="card rest-timer-card">
+          <div className="rest-timer-header">
+            <div>
+              <span className="eyebrow">CRONÔMETRO DE DESCANSO</span>
+              <div className="rest-clock">
+                {String(Math.floor(restSeconds / 60)).padStart(2, '0')}:{String(restSeconds % 60).padStart(2, '0')}
+                {restRunning && <span className="rest-live-badge">ATIVO</span>}
+              </div>
+            </div>
+            <div className="rest-preset-buttons">
+              {[60, 90, 120].map((sec) => (
+                <button key={sec} type="button" className="button-quiet compact" onClick={() => startRestTimer(sec)}>
+                  {sec}s
+                </button>
+              ))}
+              {restSeconds > 0 && (
+                <button type="button" className="button-quiet compact" onClick={() => { setRestRunning(false); setRestSeconds(0) }}>
+                  Zerar
+                </button>
+              )}
+            </div>
+          </div>
+          {restSeconds > 0 && (
+            <div className="progress rest-progress">
+              <i style={{ width: `${Math.min(100, (restSeconds / Math.max(restTotal, 1)) * 100)}%` }} />
+            </div>
+          )}
+        </section>
+
+        <div className="group-tabs">
+          {(['A', 'B', 'C'] as const).map((group) => (
+            <button key={group} className={trainingGroup === group ? 'selected' : ''} onClick={() => setTrainingGroup(group)}>
+              Treino {group}
+              <small>{group === 'A' ? 'Peito e bíceps' : group === 'B' ? 'Pernas' : 'Costas e tríceps'}</small>
+            </button>
+          ))}
+        </div>
+
+        <div className="add-exercise">
+          <input value={newExercise} onChange={event => setNewExercise(event.target.value)} placeholder="Adicionar exercício (ex: Supino Reto, Agachamento)..." />
+          <button className="button-primary compact" onClick={addExercise}>＋ Exercício</button>
+        </div>
+
+        {store.exercises[trainingGroup].length === 0 && (
+          <div className="empty-state">Sua ficha {trainingGroup} está vazia. Adicione os exercícios acima para acompanhar suas cargas e PRs.</div>
+        )}
+
+        {store.exercises[trainingGroup].map((exercise) => {
+          const previous = store.trainings.slice().reverse().flatMap(training => training.exercises.filter(item => item.exerciseId === exercise.id || norm(item.name) === norm(exercise.name)))
+          const allWeights = [
+            ...exercise.sets.map(s => s.weight ?? 0),
+            ...previous.flatMap(p => p.sets.map(s => s.weight ?? 0))
+          ]
+          const prWeight = Math.max(0, ...allWeights)
+          const currentVolume = exercise.sets.reduce((acc, s) => acc + (s.reps || 0) * (s.weight || 0), 0)
+
+          return (
+            <section className="card exercise-card" key={exercise.id}>
+              <div className="exercise-heading">
+                <div>
+                  <h2>{exercise.name}</h2>
+                  <div className="exercise-meta-pills">
+                    {prWeight > 0 && <span className="pr-badge">PR: {format(prWeight, 1)} kg</span>}
+                    {currentVolume > 0 && <span className="vol-badge">Volume: {format(currentVolume)} kg</span>}
+                  </div>
+                </div>
+                <button className="remove-button" aria-label={`Excluir ${exercise.name}`} onClick={() => removeExercise(exercise.id)}>×</button>
+              </div>
+              <div className="sets-head">
+                <span>Série</span>
+                <span>Reps</span>
+                <span>Peso (kg)</span>
+              </div>
+              {exercise.sets.map((set, index) => (
+                <div className="set-row" key={index}>
+                  <span>#{index + 1}</span>
+                  <input type="number" min="0" max="999" onKeyDown={blockInvalidChars} value={set.reps} aria-label={`Série ${index + 1} repetições`} onChange={event => updateSet(exercise.id, index, 'reps', sanitizeNumber(event.target.value, 0, 999))} />
+                  <input type="number" min="0" max="999" step="0.5" onKeyDown={blockInvalidChars} value={set.weight ?? ''} placeholder="kg" aria-label={`Série ${index + 1} peso kg`} onChange={event => updateSet(exercise.id, index, 'weight', event.target.value === '' ? null : sanitizeNumber(event.target.value, 0, 999))} />
+                </div>
+              ))}
+              <div className="exercise-footer-actions">
+                <button className="button-quiet" onClick={() => addSet(exercise.id)}>＋ Série</button>
+                <button className="button-quiet" onClick={() => startRestTimer(90)}>Descansar 90s</button>
+              </div>
+              {previous.length > 0 && (
+                <div className="load-history">
+                  <b>Último registro</b>
+                  <small>{previous[0].sets.map((set, index) => `S${index + 1}: ${set.reps}×${set.weight ?? 0}kg`).join(' · ')}</small>
+                </div>
+              )}
+            </section>
+          )
+        })}
+      </>}
 
       {page === 'Avaliação' && <>
-<div className="page-heading">
-<div>
-<div className="eyebrow">REGISTRO DE MEDIDAS</div>
-<h1>Avaliação física</h1>
-</div>
-</div>
-<form className="card assessment-form" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const next: Measure = { id: crypto.randomUUID(), date: String(form.get('date')), weight: sanitizeNumber(String(form.get('weight')), 0, 999) || undefined, bodyFat: sanitizeNumber(String(form.get('bodyFat')), 0, 100) || undefined, muscle: sanitizeNumber(String(form.get('muscle')), 0, 999) || undefined, hydration: sanitizeNumber(String(form.get('hydration')), 0, 100) || undefined, waist: sanitizeNumber(String(form.get('waist')), 0, 999) || undefined, chest: sanitizeNumber(String(form.get('chest')), 0, 999) || undefined, arm: sanitizeNumber(String(form.get('arm')), 0, 999) || undefined }; setStore((current) => ({ ...current, measures: [...current.measures, next].sort((a, b) => a.date.localeCompare(b.date)) })); notify('Avaliação salva localmente.'); event.currentTarget.reset() }}>
-<label>Data do exame<input type="date" name="date" required defaultValue={today} />
-</label>{([['weight', 'Peso corporal (kg)'], ['bodyFat', 'Gordura corporal (%)'], ['muscle', 'Massa muscular / massa magra (kg)'], ['hydration', 'Hidratação (%)'], ['waist', 'Cintura (cm)'], ['chest', 'Tórax / peitoral (cm)'], ['arm', 'Braço / bíceps (cm)']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min="0" max="999" step="0.1" name={key} onKeyDown={blockInvalidChars} />
-</label>)}<button className="button-primary">Salvar avaliação</button>
-</form>
-<section className="card">
-<h2>Comparação com a anterior</h2>{comparisonPrevious.length < 2 ? <p className="supporting-text">Registre duas avaliações para comparar medidas.</p> : (() => { const [previous, current] = comparisonPrevious; return <div className="compare-row">{(['bodyFat', 'muscle', 'waist', 'weight', 'hydration', 'chest', 'arm'] as const).map((key) => previous[key] != null && current[key] != null && <span key={key}>{key}: {format(current[key]! - previous[key]!, 1)} {key === 'bodyFat' || key === 'hydration' ? 'p.p.' : key === 'weight' || key === 'muscle' ? 'kg' : 'cm'}</span>)}</div> })()}</section>
-</>}
+        <div className="page-heading">
+          <div>
+            <div className="eyebrow">REGISTRO DE MEDIDAS</div>
+            <h1>Avaliação física</h1>
+          </div>
+        </div>
+        <form className="card assessment-form" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const next: Measure = { id: crypto.randomUUID(), date: String(form.get('date')), weight: sanitizeNumber(String(form.get('weight')), 0, 999) || undefined, bodyFat: sanitizeNumber(String(form.get('bodyFat')), 0, 100) || undefined, muscle: sanitizeNumber(String(form.get('muscle')), 0, 999) || undefined, hydration: sanitizeNumber(String(form.get('hydration')), 0, 100) || undefined, waist: sanitizeNumber(String(form.get('waist')), 0, 999) || undefined, chest: sanitizeNumber(String(form.get('chest')), 0, 999) || undefined, arm: sanitizeNumber(String(form.get('arm')), 0, 999) || undefined }; setStore((current) => ({ ...current, measures: [...current.measures, next].sort((a, b) => a.date.localeCompare(b.date)) })); notify('Avaliação salva localmente.'); event.currentTarget.reset() }}>
+          <label>Data do exame<input type="date" name="date" required defaultValue={today} /></label>
+          {([['weight', 'Peso corporal (kg)'], ['bodyFat', 'Gordura corporal (%)'], ['muscle', 'Massa muscular / massa magra (kg)'], ['hydration', 'Hidratação (%)'], ['waist', 'Cintura (cm)'], ['chest', 'Tórax / peitoral (cm)'], ['arm', 'Braço / bíceps (cm)']] as const).map(([key, label]) => (
+            <label key={key}>{label}<input type="number" min="0" max="999" step="0.1" name={key} onKeyDown={blockInvalidChars} /></label>
+          ))}
+          <button className="button-primary">Salvar avaliação</button>
+        </form>
+        <section className="card">
+          <h2>Comparação com a anterior</h2>
+          {comparisonPrevious.length < 2 ? <p className="supporting-text">Registre duas avaliações para comparar medidas.</p> : (() => { const [previous, current] = comparisonPrevious; return <div className="compare-row">{(['bodyFat', 'muscle', 'waist', 'weight', 'hydration', 'chest', 'arm'] as const).map((key) => previous[key] != null && current[key] != null && <span key={key}>{key}: {format(current[key]! - previous[key]!, 1)} {key === 'bodyFat' || key === 'hydration' ? 'p.p.' : key === 'weight' || key === 'muscle' ? 'kg' : 'cm'}</span>)}</div> })()}
+        </section>
+      </>}
 
       {page === 'Evolução' && <>
-<div className="page-heading">
-<div>
-<div className="eyebrow">CONSISTÊNCIA PESSOAL</div>
-<h1>Sua evolução</h1>
-</div>
-</div>
-<div className="stats-grid">
-<div className="energy-metric">
-<span>Treinos no mês</span>
-<strong>{monthWorkouts}</strong>
-</div>
-<div className="energy-metric">
-<span>Km de bike no mês</span>
-<strong>{format(monthKm,1)}</strong>
-</div>
-<div className="energy-metric">
-<span>Média de água</span>
-<strong>{format(waterAverage/1000,1)} <small>L</small>
-</strong>
-</div>
-<div className="energy-metric">
-<span>Dias creatina seguidos</span>
-<strong>{creatineStreak}</strong>
-</div>
-</div>
-<section className="card">
-<h2>Conquistas</h2>
-<div className="badge-grid">{[['medal','Semana de Ferro','4 treinos',monthWorkouts>=4],['drop','Mestre da Água','5 dias',waterStreak>=5],['bolt','Velocista da Bike','40 km',monthKm>=40],['capsule','Hábito Sagrado','7 dias',creatineStreak>=7]].map(([icon,name,detail,unlocked])=>
-<div className={`badge-item ${unlocked?'unlocked':''}`} key={String(name)}>
-<span className="svg-badge">{icon==='medal'?<svg viewBox="0 0 24 24">
-<path d="M8 3h8l3 5-7 5-7-5 3-5Z"/>
-<circle cx="12" cy="15" r="6"/>
-</svg>:icon==='drop'?<svg viewBox="0 0 24 24">
-<path d="M12 3s7 7 7 12a7 7 0 1 1-14 0c0-5 7-12 7-12Z"/>
-</svg>:icon==='bolt'?<svg viewBox="0 0 24 24">
-<path d="m13 2-9 12h7l-1 8 10-13h-7z"/>
-</svg>:<svg viewBox="0 0 24 24">
-<path d="M4 8a4 4 0 0 1 4-4h8a4 4 0 0 1 0 8H8a4 4 0 0 1-4-4Z"/>
-</svg>}</span>
-<b>{name}</b>
-<small>{detail}</small>
-<em>{unlocked?'Desbloqueado':'Em andamento'}</em>
-</div>)}</div>
-</section>
-<section className="card">
-<h2>Mapa de consistência</h2>
-<p className="supporting-text">Pilares diários registrados.</p>
-<div className="heatmap">{Array.from({length:todayNumber},(_,index)=>{const day=String(index+1).padStart(2,'0'),key=`${month}-${day}`;const points=Number(store.meals.some(meal=>meal.date===key))+Number((store.water[key]??0)>=store.waterReference)+Number(store.creatine[key])+Number(store.trainings.some(training=>training.date===key));return <span key={key} className={`heat heat-${points}`} title={`${key}: ${points} pilares`}>{index+1}</span>})}</div>
-</section>
-</>}
+        <div className="page-heading">
+          <div>
+            <div className="eyebrow">ANÁLISE DE PERFORMANCE · STRAVA & HEVY</div>
+            <h1>Sua evolução</h1>
+          </div>
+        </div>
+
+        {/* Métricas do Mês */}
+        <div className="stats-grid">
+          <div className="energy-metric">
+            <span>Treinos no mês</span>
+            <strong>{monthWorkouts}</strong>
+          </div>
+          <div className="energy-metric">
+            <span>Km de bike no mês</span>
+            <strong>{format(monthKm, 1)} <small>km</small></strong>
+          </div>
+          <div className="energy-metric">
+            <span>Média de água</span>
+            <strong>{format(waterAverage / 1000, 1)} <small>L/dia</small></strong>
+          </div>
+          <div className="energy-metric">
+            <span>Sequência ativa</span>
+            <strong>{streakCount} <small>dias</small></strong>
+          </div>
+        </div>
+
+        {/* Training Log Estilo Strava (Semana + 28 Dias) */}
+        <ConsistencySection
+          currentDateStr={today}
+          getActivityForDate={getActivityForDate}
+          streakCount={streakCount}
+          weeklyGoalTarget={5}
+        />
+
+        {/* GRÁFICO 1: Progressão de Carga por Exercício (Estilo Hevy) */}
+        <section className="card chart-card">
+          <div className="chart-header">
+            <div>
+              <span className="eyebrow">PROGRESSÃO DE CARGA · HEVY</span>
+              <h2>Evolução nos Treinos</h2>
+            </div>
+            {allExerciseNames.length > 0 && (
+              <select className="select-input compact-select" value={activeExerciseName} onChange={(e) => setSelectedExerciseName(e.target.value)}>
+                {allExerciseNames.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            )}
+          </div>
+
+          {exerciseProgression.length === 0 ? (
+            <p className="supporting-text">
+              {allExerciseNames.length === 0
+                ? 'Cadastre exercícios na aba "Treinos" e clique em "Concluir treino" para gerar o gráfico de progressão de carga.'
+                : `Conclua treinos com peso registrado para "${activeExerciseName}" para visualizar a curva de evolução.`}
+            </p>
+          ) : (() => {
+            const maxW = Math.max(...exerciseProgression.map(p => p.maxWeight), 10)
+            const width = 320
+            const height = 130
+            const padX = 28
+            const padY = 22
+            const coords = exerciseProgression.map((pt, i) => {
+              const x = exerciseProgression.length === 1 ? width / 2 : padX + (i / (exerciseProgression.length - 1)) * (width - padX * 2)
+              const y = height - padY - (pt.maxWeight / maxW) * (height - padY * 2)
+              return { ...pt, x, y }
+            })
+            const polyline = coords.map(c => `${c.x},${c.y}`).join(' ')
+            const area = `${coords[0].x},${height - padY} ${polyline} ${coords[coords.length - 1].x},${height - padY}`
+
+            return (
+              <div className="svg-chart-wrap">
+                <div className="chart-kpi-row">
+                  <span>Maior Carga (PR): <b>{format(maxW, 1)} kg</b></span>
+                  <span>Último Volume: <b>{format(exerciseProgression[exerciseProgression.length - 1].volume)} kg</b></span>
+                </div>
+                <svg viewBox={`0 0 ${width} ${height}`} className="progression-svg">
+                  <defs>
+                    <linearGradient id="loadGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
+                      <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                    </linearGradient>
+                  </defs>
+                  {coords.length > 1 && <polygon points={area} fill="url(#loadGrad)" />}
+                  {coords.length > 1 && <polyline fill="none" stroke="#3b82f6" strokeWidth="2.5" points={polyline} />}
+                  {coords.map((c, idx) => (
+                    <g key={idx}>
+                      <circle cx={c.x} cy={c.y} r="4" fill="#60a5fa" stroke="#0c1118" strokeWidth="1.5" />
+                      <text x={c.x} y={c.y - 7} textAnchor="middle" fill="#dce7f5" fontSize="8" fontWeight="700">{c.maxWeight}kg</text>
+                      <text x={c.x} y={height - 6} textAnchor="middle" fill="#7f91a8" fontSize="7">{c.label}</text>
+                    </g>
+                  ))}
+                </svg>
+              </div>
+            )
+          })()}
+        </section>
+
+        {/* GRÁFICO 2: Consumo de Calorias e Proteínas (Últimos 7 dias) */}
+        <section className="card chart-card">
+          <div className="chart-header">
+            <div>
+              <span className="eyebrow">HISTÓRICO NUTRICIONAL · 7 DIAS</span>
+              <h2>Calorias & Proteínas</h2>
+            </div>
+            <span className="auto-pill">Hoje: {format(calories)} kcal</span>
+          </div>
+          {(() => {
+            const maxKcal = Math.max(...last7DaysNutrition.map(d => d.kcal), store.comparison || 2200, 500)
+            return (
+              <div className="bar-chart-7d">
+                {last7DaysNutrition.map((d) => {
+                  const pct = Math.min(100, Math.round((d.kcal / maxKcal) * 100))
+                  return (
+                    <div key={d.iso} className={`bar-col ${d.iso === today ? 'bar-col-today' : ''}`}>
+                      <span className="bar-val">{d.kcal > 0 ? format(d.kcal) : '—'}</span>
+                      <div className="bar-track">
+                        <div className="bar-fill" style={{ height: `${Math.max(pct, d.kcal > 0 ? 8 : 2)}%` }} />
+                      </div>
+                      <span className="bar-day">{d.dayLabel}</span>
+                      <small className="bar-prot">{d.prot > 0 ? `${format(d.prot, 0)}g P` : ''}</small>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
+        </section>
+
+        {/* GRÁFICO 3: Evolução do Peso Corporal */}
+        <section className="card chart-card">
+          <div className="chart-header">
+            <div>
+              <span className="eyebrow">COMPOSIÇÃO CORPORAL</span>
+              <h2>Curva de Peso (kg)</h2>
+            </div>
+            <button className="button-quiet compact" onClick={() => setPage('Avaliação')}>＋ Medida</button>
+          </div>
+          {store.measures.filter(m => m.weight != null).length === 0 ? (
+            <p className="supporting-text">Registre seu peso na aba "Avaliação" para acompanhar o gráfico de composição corporal.</p>
+          ) : (() => {
+            const pts = store.measures.filter(m => m.weight != null)
+            const weights = pts.map(p => p.weight!)
+            const minW = Math.min(...weights) - 2
+            const maxW = Math.max(...weights) + 2
+            const width = 320
+            const height = 115
+            const padX = 28
+            const padY = 20
+            const coords = pts.map((p, i) => {
+              const x = pts.length === 1 ? width / 2 : padX + (i / (pts.length - 1)) * (width - padX * 2)
+              const y = height - padY - ((p.weight! - minW) / Math.max(maxW - minW, 1)) * (height - padY * 2)
+              return { ...p, x, y, label: p.date.slice(5).split('-').reverse().join('/') }
+            })
+            const polyline = coords.map(c => `${c.x},${c.y}`).join(' ')
+            return (
+              <svg viewBox={`0 0 ${width} ${height}`} className="progression-svg">
+                {coords.length > 1 && <polyline fill="none" stroke="#38bdf8" strokeWidth="2.5" points={polyline} />}
+                {coords.map((c, idx) => (
+                  <g key={idx}>
+                    <circle cx={c.x} cy={c.y} r="4" fill="#38bdf8" stroke="#0c1118" strokeWidth="1.5" />
+                    <text x={c.x} y={c.y - 7} textAnchor="middle" fill="#e0f2fe" fontSize="8" fontWeight="700">{format(c.weight!, 1)}kg</text>
+                    <text x={c.x} y={height - 5} textAnchor="middle" fill="#7f91a8" fontSize="7">{c.label}</text>
+                  </g>
+                ))}
+              </svg>
+            )
+          })()}
+        </section>
+
+        {/* Conquistas */}
+        <section className="card">
+          <h2>Conquistas do mês</h2>
+          <div className="badge-grid">
+            {[['medal', 'Semana de Ferro', '4 treinos no mês', monthWorkouts >= 4], ['drop', 'Mestre da Água', '5 dias batendo a meta', waterStreak >= 5], ['bolt', 'Velocista da Bike', '40 km pedalados', monthKm >= 40], ['capsule', 'Hábito Sagrado', '7 dias de creatina', creatineStreak >= 7]].map(([icon, name, detail, unlocked]) => (
+              <div className={`badge-item ${unlocked ? 'unlocked' : ''}`} key={String(name)}>
+                <span className="svg-badge">
+                  {icon === 'medal' ? <svg viewBox="0 0 24 24"><path d="M8 3h8l3 5-7 5-7-5 3-5Z" /><circle cx="12" cy="15" r="6" /></svg> : icon === 'drop' ? <svg viewBox="0 0 24 24"><path d="M12 3s7 7 7 12a7 7 0 1 1-14 0c0-5 7-12 7-12Z" /></svg> : icon === 'bolt' ? <svg viewBox="0 0 24 24"><path d="m13 2-9 12h7l-1 8 10-13h-7z" /></svg> : <svg viewBox="0 0 24 24"><path d="M4 8a4 4 0 0 1 4-4h8a4 4 0 0 1 0 8H8a4 4 0 0 1-4-4Z" /></svg>}
+                </span>
+                <b>{name}</b>
+                <small>{detail}</small>
+                <em>{unlocked ? 'Desbloqueado' : 'Em andamento'}</em>
+              </div>
+            ))}
+          </div>
+        </section>
+      </>}
 
       {page === 'Rotina' && <>
-<div className="page-heading">
-<div>
-<div className="eyebrow">PREFERÊNCIAS LOCAIS</div>
-<h1>Configurações</h1>
-</div>
-</div>
-<section className="card setting-card">
-<h2>Backup completo</h2>
-<p className="supporting-text">Exporte seus registros ou restaure um arquivo JSON.</p>
-<div className="settings-actions">
-<button className="button-primary compact" onClick={exportBackup}>Exportar backup</button>
-<label className="button-quiet import-button">Importar JSON<input type="file" accept="application/json,.json" onChange={event=>importBackup(event.target.files?.[0])}/>
-</label>
-</div>
-</section>
-<section className="card setting-card">
-<h2>Alimentos e combos</h2>
-<p className="supporting-text">{store.combos.length} combos · {store.customFoods.length} alimentos personalizados</p>{store.combos.map(combo=>
-<div className="manage-row" key={combo.id}>
-<span>{combo.name}</span>
-<button className="remove-button" onClick={()=>setStore(current=>({...current,combos:current.combos.filter(item=>item.id!==combo.id)}))}>Excluir</button>
-</div>)}{store.customFoods.map(food=>
-<div className="manage-row" key={food.id}>
-<span>{food.description}</span>
-<button className="remove-button" onClick={()=>setStore(current=>({...current,customFoods:current.customFoods.filter(item=>item.id!==food.id)}))}>Excluir</button>
-</div>)}</section>
-<section className="card setting-card">
-<h2>Medidas caseiras</h2>{Object.entries(store.servings).map(([name,value])=>
-<label className="setting-input-row" key={name}>{name}<input type="number" min="0" max="9999" onKeyDown={blockInvalidChars} value={value} onChange={event=>setStore(current=>({...current,servings:{...current.servings,[name]:sanitizeNumber(event.target.value, 1, 9999)}}))}/> g</label>)}<label className="setting-input-row">Garrafa de água<input type="number" min="0" max="9999" onKeyDown={blockInvalidChars} value={store.bottleMl} onChange={event=>setStore(current=>({...current,bottleMl:sanitizeNumber(event.target.value, 50, 9999)}))}/> ml</label>
-</section>
-<section className="card setting-card">
-<h2>Integrações futuras</h2>
-<label className="field-label" htmlFor="ai-key">Chave de API de IA (opcional)</label>
-<input id="ai-key" type="password" autoComplete="off" placeholder="Não configurada" value={apiKey} onChange={event=>setApiKey(event.target.value)}/>
-<p className="supporting-text">Campo apenas visual nesta versão; nenhuma chave é enviada ou salva.</p>
-</section>
-<section className="card setting-card">
-<h2>Armazenamento local</h2>
-<p className="supporting-text">Seus registros ficam neste navegador.</p>
-<button className="button-quiet" onClick={() => { if (window.confirm('Apagar todos os registros locais?')) { localStorage.removeItem(KEY); setStore(empty); notify('Registros locais apagados.') } }}>Apagar meus dados</button>
-</section>
-<section className="card setting-card">
-<h2>Fonte TACO</h2>
-<p className="supporting-text">Nutrientes por 100 g. Campos indisponíveis não são convertidos em zero.</p>
-<a className="source-link" href="/data/TACO-LICENSE" target="_blank" rel="noreferrer">Ver licença MIT</a>
-</section>
-</>}
+        <div className="page-heading">
+          <div>
+            <div className="eyebrow">PLANEJADOR DIÁRIO DE HÁBITOS</div>
+            <h1>Sua rotina de hoje</h1>
+          </div>
+          <button className="button-quiet compact" onClick={() => setPage('Configurações')}>⚙ Ajustes</button>
+        </div>
+        {[
+          {
+            title: 'Manhã (06:00 — 11:00)',
+            checks: [
+              ['Aula / Deslocamento matinal', activities.some(a => a.date === today && a.done && (a.kind === 'Bike' || a.kind.includes('Passos')))],
+              ['Merenda / Café da manhã registrado', meals.some(m => slotMatches(m, 'Merenda da Escola'))],
+              ['Primeira garrafinha de água (500ml+)', water >= 500],
+            ],
+          },
+          {
+            title: 'Meio-dia (11:00 — 14:30)',
+            checks: [
+              ['Almoço completo registrado', meals.some(m => m.slot === 'Almoço')],
+              ['Metade da meta de água (1,7L+)', water >= store.waterReference / 2],
+            ],
+          },
+          {
+            title: 'Tarde (15:00 — 18:30)',
+            checks: [
+              ['Lanche Pré-Treino consumido', meals.some(m => m.slot === 'Pré-Treino')],
+              ['Treino na Academia concluído', store.trainings.some(t => t.date === today) || activities.some(a => a.date === today && a.done && a.kind === 'Academia')],
+              ['Pedalada registrada', activities.some(a => a.date === today && a.done && a.kind === 'Bike')],
+            ],
+          },
+          {
+            title: 'Noite (19:00 — 23:00)',
+            checks: [
+              ['Jantar registrado', meals.some(m => slotMatches(m, 'Jantar Único'))],
+              ['Creatina 5g tomada', Boolean(store.creatine[today])],
+              ['Meta total de hidratação batida', water >= store.waterReference],
+            ],
+          },
+        ].map((block) => (
+          <section className="card routine-block" key={block.title}>
+            <h2>{block.title}</h2>
+            <div className="routine-list">
+              {block.checks.map(([label, done]) => (
+                <div className="routine-row" key={String(label)}>
+                  <span>{label}</span>
+                  <span className={`routine-status ${done ? 'routine-done' : ''}`}>{done ? '✓ Concluído' : 'Pendente'}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
+      </>}
+
+      {page === 'Configurações' && <>
+        <div className="page-heading">
+          <div>
+            <div className="eyebrow">PREFERÊNCIAS DO APLICATIVO</div>
+            <h1>Configurações</h1>
+          </div>
+          <button className="button-quiet compact" onClick={() => setPage('Hoje')}>Voltar</button>
+        </div>
+        <section className="card setting-card">
+          <h2>Backup completo</h2>
+          <p className="supporting-text">Exporte seus registros ou restaure um arquivo JSON salvo anteriormente.</p>
+          <div className="settings-actions">
+            <button className="button-primary compact" onClick={exportBackup}>Exportar backup</button>
+            <label className="button-quiet import-button">
+              Importar JSON
+              <input type="file" accept="application/json,.json" onChange={event => importBackup(event.target.files?.[0])} />
+            </label>
+          </div>
+        </section>
+        <section className="card setting-card">
+          <h2>Alimentos e combos salvos</h2>
+          <p className="supporting-text">{store.combos.length} combos · {store.customFoods.length} alimentos personalizados</p>
+          {store.combos.map(combo => (
+            <div className="manage-row" key={combo.id}>
+              <span>{combo.name}</span>
+              <button className="remove-button" onClick={() => setStore(current => ({ ...current, combos: current.combos.filter(item => item.id !== combo.id) }))}>Excluir</button>
+            </div>
+          ))}
+          {store.customFoods.map(food => (
+            <div className="manage-row" key={food.id}>
+              <span>{food.description}</span>
+              <button className="remove-button" onClick={() => setStore(current => ({ ...current, customFoods: current.customFoods.filter(item => item.id !== food.id) }))}>Excluir</button>
+            </div>
+          ))}
+        </section>
+        <section className="card setting-card">
+          <h2>Medidas caseiras e hidratação</h2>
+          {Object.entries(store.servings).map(([name, value]) => (
+            <label className="setting-input-row" key={name}>
+              {name}
+              <input type="number" min="0" max="9999" onKeyDown={blockInvalidChars} value={value} onChange={event => setStore(current => ({ ...current, servings: { ...current.servings, [name]: sanitizeNumber(event.target.value, 1, 9999) } }))} /> g
+            </label>
+          ))}
+          <label className="setting-input-row">
+            Meta diária de água (ml)
+            <input type="number" min="500" max="10000" step="100" onKeyDown={blockInvalidChars} value={store.waterReference} onChange={event => setStore(current => ({ ...current, waterReference: sanitizeNumber(event.target.value, 500, 10000) }))} /> ml
+          </label>
+          <label className="setting-input-row">
+            Tamanho da garrafa (ml)
+            <input type="number" min="50" max="5000" onKeyDown={blockInvalidChars} value={store.bottleMl} onChange={event => setStore(current => ({ ...current, bottleMl: sanitizeNumber(event.target.value, 50, 5000) }))} /> ml
+          </label>
+        </section>
+        <section className="card setting-card">
+          <h2>Integrações futuras</h2>
+          <label className="field-label" htmlFor="ai-key">Chave de API de IA (opcional)</label>
+          <input id="ai-key" type="password" autoComplete="off" placeholder="Não configurada" value={apiKey} onChange={event => setApiKey(event.target.value)} />
+          <p className="supporting-text">Campo apenas visual nesta versão; nenhuma chave é enviada ou salva.</p>
+        </section>
+        <section className="card setting-card">
+          <h2>Armazenamento local</h2>
+          <p className="supporting-text">Seus registros ficam privados neste navegador.</p>
+          <button className="button-quiet" onClick={() => { if (window.confirm('Apagar todos os registros locais?')) { localStorage.removeItem(KEY); setStore(empty); notify('Registros locais apagados.') } }}>Apagar meus dados</button>
+        </section>
+        <section className="card setting-card">
+          <h2>Fontes de Dados</h2>
+          <p className="supporting-text">Tabela Brasileira de Composição de Alimentos (TACO / UNICAMP) e Open Food Facts Brasil.</p>
+          <a className="source-link" href="/data/TACO-LICENSE" target="_blank" rel="noreferrer">Ver licença MIT</a>
+        </section>
+      </>}
     </main>
 
-    <nav className="bottom-nav" aria-label="Navegação principal">{(['Hoje', 'Comida', 'Treinos', 'Movimento', 'Evolução', 'Avaliação', 'Rotina'] as const).map((item) => <button key={item} className={page === item ? 'active' : ''} onClick={() => {if(item==='Comida')setSlot(getAutoSlot());setPage(item);window.scrollTo({top:0,behavior:'instant'})}}>
-<span>{item === 'Hoje' ? '⌂' : item === 'Comida' ? '◉' : item === 'Treinos' ? '▤' : item === 'Movimento' ? '⌁' : item === 'Evolução' ? '▦' : item === 'Avaliação' ? '◍' : '◷'}</span>{item}</button>)}</nav>
+    <nav className="bottom-nav" aria-label="Navegação principal">
+      {(['Hoje', 'Comida', 'Treinos', 'Movimento', 'Evolução', 'Avaliação', 'Rotina'] as const).map((item) => (
+        <button
+          key={item}
+          className={page === item ? 'active' : ''}
+          onClick={() => {
+            if (item === 'Comida') setSlot(getAutoSlot())
+            setPage(item)
+            window.scrollTo({ top: 0, behavior: 'instant' })
+          }}
+        >
+          <span>{item === 'Hoje' ? '⌂' : item === 'Comida' ? '◉' : item === 'Treinos' ? '▤' : item === 'Movimento' ? '⌁' : item === 'Evolução' ? '▦' : item === 'Avaliação' ? '◍' : '◷'}</span>
+          {item}
+        </button>
+      ))}
+    </nav>
 
-    {bikeDialog && <div className="modal-backdrop" onClick={() => setBikeDialog(false)}>
-<section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="bike-title" onClick={(event) => event.stopPropagation()}>
-<button className="modal-close" onClick={() => setBikeDialog(false)}>×</button>
-<span className="eyebrow">REGISTRAR PEDALADA</span>
-<h2 id="bike-title">Qual foi o trajeto?</h2>{[['Casa ↔ Escola', 3.5], ['Casa ↔ Academia', 6], ['Casa / Tia → Academia', 1.5]].map(([label, km]) => <button className="route-button" key={label} onClick={() => saveBike(Number(km), 0, String(label))}>
-<span>{label}</span>
-<b>{format(Number(km), 1)} km</b>
-</button>)}<div className="custom-route">
-<label>Trajeto livre</label>
-<div className="route-inputs">
-<input type="number" min="0" max="999" step="0.1" onKeyDown={blockInvalidChars} placeholder="km" value={customKm} onChange={(event) => setCustomKm(event.target.value)} />
-<input type="number" min="0" max="999" onKeyDown={blockInvalidChars} placeholder="min" value={customMinutes} onChange={(event) => setCustomMinutes(event.target.value)} />
-</div>
-<button className="button-primary" onClick={() => sanitizeNumber(customKm, 0, 999) > 0 && sanitizeNumber(customMinutes, 0, 999) > 0 ? saveBike(Number(customKm), Number(customMinutes), 'Trajeto livre') : notify('Informe km e minutos válidos.')}>Salvar trajeto</button>
-</div>
-</section>
-</div>}
-    {toast && <div className="toast" role="status">{toast}<button aria-label="Fechar" onClick={() => setToast('')}>×</button>
-</div>}
-    <footer className="app-footer">PRIVADO NESTE DISPOSITIVO · DADOS BASE TACO</footer>
+    {bikeDialog && (
+      <div className="modal-backdrop" onClick={() => setBikeDialog(false)}>
+        <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="bike-title" onClick={(event) => event.stopPropagation()}>
+          <button className="modal-close" onClick={() => setBikeDialog(false)}>×</button>
+          <span className="eyebrow">REGISTRAR PEDALADA</span>
+          <h2 id="bike-title">Qual foi o trajeto?</h2>
+          {[['Casa ↔ Escola', 3.5], ['Casa ↔ Academia', 6], ['Casa / Tia → Academia', 1.5]].map(([label, km]) => (
+            <button className="route-button" key={label} onClick={() => saveBike(Number(km), 0, String(label))}>
+              <span>{label}</span>
+              <b>{format(Number(km), 1)} km</b>
+            </button>
+          ))}
+          <div className="custom-route">
+            <label>Trajeto livre</label>
+            <div className="route-inputs">
+              <input type="number" min="0" max="999" step="0.1" onKeyDown={blockInvalidChars} placeholder="km" value={customKm} onChange={(event) => setCustomKm(event.target.value)} />
+              <input type="number" min="0" max="999" onKeyDown={blockInvalidChars} placeholder="min" value={customMinutes} onChange={(event) => setCustomMinutes(event.target.value)} />
+            </div>
+            <button className="button-primary" onClick={() => sanitizeNumber(customKm, 0, 999) > 0 && sanitizeNumber(customMinutes, 0, 999) > 0 ? saveBike(Number(customKm), Number(customMinutes), 'Trajeto livre') : notify('Informe km e minutos válidos.')}>Salvar trajeto</button>
+          </div>
+        </section>
+      </div>
+    )}
+
+    {toast && (
+      <div className="toast" role="status">
+        {toast}
+        <button aria-label="Fechar" onClick={() => setToast('')}>×</button>
+      </div>
+    )}
+    <footer className="app-footer">PRIVADO NESTE DISPOSITIVO · TACO & OPEN FOOD FACTS BR</footer>
   </div>
 }
 

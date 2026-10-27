@@ -189,3 +189,567 @@
 .slot-control-row .select-input {
   flex: 1;
 }
+
+
+/* ==========================================
+   STAGE 1 & 2 COMPLETE STYLES:
+   Consistency (Strava), Charts (Hevy), Water/Creatine, Routine & Direct Add
+   ========================================== */
+
+.active-gear {
+  border-color: #3b82f6 !important;
+  color: #60a5fa !important;
+  background: #17263c !important;
+}
+
+.macros-mini-row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: #0f1620;
+  border: 1px solid #233042;
+  font-size: 11px;
+  color: #93a4b8;
+}
+.macros-mini-row b {
+  color: #e2ecf7;
+}
+
+/* Hidratação & Pílula de Creatina */
+.water-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.creatine-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 20px;
+  border: 1px solid #2c3f59;
+  background: #101824;
+  color: #9eb3cc;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.creatine-pill:hover {
+  border-color: #3b82f6;
+  color: #e2efff;
+}
+.creatine-pill-active {
+  background: #162c4b;
+  border-color: #3b82f6;
+  color: #93c5fd;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.25);
+}
+.creatine-check {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+  border: 1px solid #455c7a;
+  display: inline-grid;
+  place-items: center;
+  font-size: 10px;
+  background: #0c121b;
+  color: #60a5fa;
+}
+.creatine-pill-active .creatine-check {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #fff;
+}
+
+.water-controls-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+.water-button.secondary-water {
+  background: #1d3557;
+  border: 1px solid #2e5082;
+}
+.water-button.secondary-water:hover {
+  background: #254470;
+}
+.water-Secondary-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: center;
+}
+.water-custom-form {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+}
+.water-custom-form input {
+  flex: 1;
+  min-width: 0;
+  background: #0e151f;
+  border: 1px solid #2b3b50;
+  border-radius: 10px;
+  color: #edf3fb;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+.water-correction:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Consistência e Histórico (Strava Style) */
+.consistency-section {
+  display: grid;
+  gap: 10px;
+  margin: 13px 0;
+}
+.consistency-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.consistency-stat {
+  background: linear-gradient(145deg, #141d2a, #101722);
+  border: 1px solid #263243;
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+.consistency-stat-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #60a5fa;
+}
+.consistency-stat-label svg {
+  width: 14px;
+  height: 14px;
+}
+.consistency-stat-value {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+  color: #edf3fb;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.consistency-stat-value small {
+  font-size: 11px;
+  font-weight: 500;
+  color: #8fa1b8;
+}
+
+.consistency-card {
+  background: linear-gradient(145deg, #141d2a, #101722);
+  border: 1px solid #263243;
+  border-radius: 16px;
+  padding: 14px;
+}
+.consistency-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 10px;
+  color: #8fa1b8;
+}
+.consistency-card-header b {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #60a5fa;
+}
+
+.training-week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+.training-day {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 4px;
+  border-radius: 11px;
+  background: #0d131c;
+  border: 1px solid #222e3e;
+  color: #dce7f5;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.training-day:hover {
+  border-color: #3b82f6;
+}
+.training-day-current {
+  border-color: #3b82f6;
+  background: #132238;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.35);
+}
+.training-day-label {
+  font-size: 9px;
+  color: #8496ad;
+  font-weight: 600;
+}
+.training-day strong {
+  font-size: 12px;
+  color: #edf3fb;
+}
+.training-day-current strong {
+  color: #60a5fa;
+}
+.training-indicators {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin-top: 2px;
+}
+.training-indicator {
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  background: #172130;
+  color: #46576e;
+  display: grid;
+  place-items: center;
+}
+.training-indicator svg {
+  width: 8px;
+  height: 8px;
+}
+.indicator-workout {
+  background: #2563eb;
+  color: #fff;
+}
+.indicator-nutrition {
+  background: #f59e0b;
+  color: #0c1118;
+}
+.indicator-water {
+  background: #06b6d4;
+  color: #0c1118;
+}
+.indicator-bike {
+  background: #10b981;
+  color: #0c1118;
+}
+.current-day-check {
+  display: none;
+}
+
+.consistency-heatmap {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+}
+.heat-cell {
+  aspect-ratio: 1;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 600;
+  border: 1px solid #1f2b3a;
+}
+.heat-legend .heat-cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.heat-blue-0 {
+  background: #0e151f;
+  color: #5b6d82;
+}
+.heat-blue-1 {
+  background: #142847;
+  border-color: #1f3c68;
+  color: #93c5fd;
+}
+.heat-blue-2 {
+  background: #1d3f72;
+  border-color: #2b599e;
+  color: #dbeafe;
+}
+.heat-blue-3 {
+  background: #2563eb;
+  border-color: #3b82f6;
+  color: #ffffff;
+}
+.heat-blue-4 {
+  background: #3b82f6;
+  border-color: #60a5fa;
+  color: #ffffff;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.35);
+}
+.heat-current {
+  outline: 1.5px solid #60a5fa;
+}
+
+/* Barra de Resumo de Refeição (Comida 1-Clique) */
+.meal-summary-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid #263447;
+}
+.meal-summary-copy {
+  display: grid;
+  gap: 2px;
+}
+.meal-summary-copy b {
+  font-size: 12px;
+  color: #e2ecf7;
+}
+.meal-summary-copy small {
+  font-size: 10px;
+  color: #8ba0b8;
+}
+.meal-summary-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.clear-search {
+  border: 0;
+  background: transparent;
+  color: #8da1b9;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.off-search-button {
+  width: 100%;
+  margin: 8px 0;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid #2b4c7e;
+  background: linear-gradient(145deg, #13233b, #0f1b2d);
+  color: #93c5fd;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+}
+.off-search-button:hover {
+  border-color: #3b82f6;
+  background: #172b47;
+}
+.online-search-status {
+  font-size: 10px;
+  color: #8ab9fa;
+  margin: 4px 2px 10px;
+}
+
+/* Cronômetro de Descanso & PRs nos Treinos */
+.rest-timer-card {
+  border-color: #294366;
+  background: linear-gradient(145deg, #132033, #0f1724);
+}
+.rest-timer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.rest-clock {
+  font-size: 22px;
+  font-weight: 750;
+  color: #edf3fb;
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rest-live-badge {
+  font-size: 9px;
+  padding: 2px 7px;
+  border-radius: 12px;
+  background: #2563eb;
+  color: #fff;
+  letter-spacing: 0.08em;
+}
+.rest-preset-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rest-progress {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+.exercise-meta-pills {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.pr-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #172e4d;
+  color: #60a5fa;
+  border: 1px solid #2b4f82;
+}
+.vol-badge {
+  font-size: 9px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #141e2b;
+  color: #93a6be;
+  border: 1px solid #263547;
+}
+.exercise-footer-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Gráficos Visuais na Aba Evolução */
+.chart-card {
+  padding: 16px;
+}
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.compact-select {
+  max-width: 165px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+.svg-chart-wrap {
+  margin-top: 6px;
+}
+.chart-kpi-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #93a6be;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background: #0e151f;
+  border-radius: 8px;
+  border: 1px solid #212e3f;
+}
+.chart-kpi-row b {
+  color: #60a5fa;
+}
+.progression-svg {
+  width: 100%;
+  height: auto;
+  background: #0c121b;
+  border: 1px solid #1f2c3d;
+  border-radius: 12px;
+  padding: 6px 0;
+}
+
+.bar-chart-7d {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px 10px 8px;
+  background: #0c121b;
+  border: 1px solid #1f2c3d;
+  border-radius: 12px;
+  align-items: end;
+}
+.bar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.bar-val {
+  font-size: 8px;
+  color: #93a6be;
+  font-weight: 600;
+}
+.bar-track {
+  width: 100%;
+  max-width: 24px;
+  height: 85px;
+  background: #141d29;
+  border-radius: 6px;
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  border: 1px solid #223042;
+}
+.bar-fill {
+  width: 100%;
+  background: linear-gradient(180deg, #60a5fa, #2563eb);
+  border-radius: 4px 4px 0 0;
+  transition: height 0.25s ease;
+}
+.bar-col-today .bar-track {
+  border-color: #3b82f6;
+}
+.bar-day {
+  font-size: 9px;
+  font-weight: 700;
+  color: #dce7f5;
+}
+.bar-col-today .bar-day {
+  color: #60a5fa;
+}
+.bar-prot {
+  font-size: 8px;
+  color: #64748b;
+  min-height: 11px;
+}
+
+/* Planejador de Rotina */
+.routine-block h2 {
+  font-size: 13px;
+  color: #60a5fa;
+  margin: 0 0 10px;
+}
+.routine-list {
+  display: grid;
+  gap: 6px;
+}
+.routine-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: #0e151f;
+  border: 1px solid #212e3f;
+  font-size: 11px;
+  color: #dce7f5;
+}
+.routine-status {
+  font-size: 10px;
+  font-weight: 650;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: #172130;
+  color: #7f91a8;
+}
+.routine-done {
+  background: #132f26;
+  color: #34d399;
+  border: 1px solid #1f513f;
+}
