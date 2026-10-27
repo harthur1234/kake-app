@@ -1,8 +1,8 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 type Food = { id: number; description: string; category: string; energy_kcal?: number | string; protein_g?: number | string; carbohydrate_g?: number | string; lipid_g?: number | string; source?: 'TACO' | 'Estimativa'; unitKcal?: number }
-type Slot = 'Merenda da Escola' | 'Almoço' | 'Pré-Treino' | 'Jantar Único' | 'Refeição Livre / Lanche'
+type Slot = 'Café / Merenda' | 'Almoço' | 'Pré-Treino' | 'Jantar' | 'Refeição Livre / Lanche' | 'Merenda da Escola' | 'Jantar Único'
 type Item = { id: string; foodId: number; name: string; grams: number; kcal?: number; protein?: number; carbs?: number; fat?: number; source?: 'TACO' | 'Estimativa' }
 type Meal = { id: string; slot: Slot; time: string; date: string; items: Item[] }
 type Activity = { id: string; kind: string; date: string; done: boolean; km?: number; minutes?: number; label?: string }
@@ -13,12 +13,13 @@ type Store = { meals: Meal[]; water: Record<string, number>; activities: Activit
 
 const KEY = 'kake-pessoal-v2'
 const SLOTS: Array<{ name: Slot; time: string }> = [
-  { name: 'Merenda da Escola', time: '10:00' },
+  { name: 'Café / Merenda', time: '09:00' },
   { name: 'Almoço', time: '12:00' },
-  { name: 'Pré-Treino', time: '15:45' },
-  { name: 'Jantar Único', time: '21:00' },
+  { name: 'Pré-Treino', time: '16:00' },
+  { name: 'Jantar', time: '20:00' },
   { name: 'Refeição Livre / Lanche', time: 'Livre' },
 ]
+
 const initialExercises = (): Store['exercises'] => ({ A: [], B: [], C: [] })
 const empty: Store = { meals: [], water: {}, activities: [], comparison: null, comparisonConfirmed: false, waterReference: 3500, bottleMl: 500, servings: { 'Colher de Servir': 60, Concha: 90, Escumadeira: 85, 'Colher de Sopa': 25 }, creatine: {}, measures: [], combos: [], customFoods: [], exercises: initialExercises(), trainings: [] }
 const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -27,6 +28,26 @@ const numeric = (value: unknown): number | null => typeof value === 'number' && 
 const format = (value: number, digits = 0) => value.toLocaleString('pt-BR', { maximumFractionDigits: digits, minimumFractionDigits: digits })
 const norm = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[,;._-]/g, ' ').toLowerCase().replace(/\s+/g, ' ').trim()
 
+const sanitizeNumber = (val: string | number | null | undefined, min = 0, max = 9999): number => {
+  if (val === '' || val === null || val === undefined) return min
+  const str = String(val).replace(',', '.')
+  const parsed = parseFloat(str)
+  if (isNaN(parsed) || !Number.isFinite(parsed)) return min
+  return Math.min(max, Math.max(min, parsed))
+}
+
+const blockInvalidChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (['-', '+', 'e', 'E'].includes(e.key)) e.preventDefault()
+}
+
+const getAutoSlot = (date = new Date()): Slot => {
+  const hour = date.getHours()
+  if (hour < 11) return 'Café / Merenda'
+  if (hour >= 11 && hour < 15) return 'Almoço'
+  if (hour >= 15 && hour < 19) return 'Pré-Treino'
+  return 'Jantar'
+}
+
 function App() {
   "use no memo"
   const [store, setStore] = useState<Store>(safeRead)
@@ -34,7 +55,7 @@ function App() {
   const [todayNumber] = useState(() => Number(today.slice(8, 10)))
   const [foods, setFoods] = useState<Food[]>([])
   const [page, setPage] = useState<'Hoje' | 'Comida' | 'Movimento' | 'Treinos' | 'Evolução' | 'Avaliação' | 'Rotina'>('Hoje')
-  const [slot, setSlot] = useState<Slot>('Merenda da Escola')
+  const [slot, setSlot] = useState<Slot>(getAutoSlot)
   const [search, setSearch] = useState('')
   const [grams, setGrams] = useState<Record<number, number>>({})
   const [tray, setTray] = useState<Item[]>([])
@@ -77,22 +98,27 @@ function App() {
     }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || a.food.description.localeCompare(b.food.description, 'pt-BR')).slice(0, 40).map((entry) => entry.food)
   }, [allFoods, query])
 
-  function addFood(food: Food, amount = grams[food.id] ?? 100) {
-    if (!Number.isFinite(amount) || amount <= 0) { notify('Informe gramas maiores que zero.'); return }
+  function addFood(food: Food, amount?: number) {
+    const chosen = amount ?? grams[food.id] ?? 100
+    const cleanAmount = sanitizeNumber(chosen, 0, 9999)
+    if (cleanAmount <= 0) { notify('Informe gramas maiores que zero.'); return }
     const kcal = numeric(food.energy_kcal), proteinBase = numeric(food.protein_g), carbs = numeric(food.carbohydrate_g), fat = numeric(food.lipid_g)
-    const item: Item = { id: crypto.randomUUID(), foodId: food.id, name: food.description, grams: amount, source: food.source ?? 'TACO', ...(kcal === null ? {} : { kcal: food.unitKcal ? food.unitKcal * amount : kcal * amount / 100 }), ...(proteinBase === null ? {} : { protein: proteinBase * amount / 100 }), ...(carbs === null ? {} : { carbs: carbs * amount / 100 }), ...(fat === null ? {} : { fat: fat * amount / 100 }) }
+    const item: Item = { id: crypto.randomUUID(), foodId: food.id, name: food.description, grams: cleanAmount, source: food.source ?? 'TACO', ...(kcal === null ? {} : { kcal: food.unitKcal ? food.unitKcal * cleanAmount : kcal * cleanAmount / 100 }), ...(proteinBase === null ? {} : { protein: proteinBase * cleanAmount / 100 }), ...(carbs === null ? {} : { carbs: carbs * cleanAmount / 100 }), ...(fat === null ? {} : { fat: fat * cleanAmount / 100 }) }
     setTray((current) => [...current, item]); setTrayOpen(true)
-    notify(`${food.description} · ${format(amount)} g na bandeja`)
+    notify(`${food.description} · ${format(cleanAmount)} g na bandeja`)
   }
+
   function confirmMeal() {
     if (!tray.length) { notify('Adicione alimentos à bandeja primeiro.'); return }
-    const currentSlot = SLOTS.find((entry) => entry.name === slot)!
+    const currentSlot = SLOTS.find((entry) => entry.name === slot)
+    const timeNow = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
     setStore((current) => {
       const existing = current.meals.find((meal) => meal.date === today && meal.slot === slot)
-      return existing ? { ...current, meals: current.meals.map((meal) => meal.id === existing.id ? { ...meal, items: [...meal.items, ...tray] } : meal) } : { ...current, meals: [...current.meals, { id: crypto.randomUUID(), slot, time: slot === 'Refeição Livre / Lanche' ? new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : currentSlot.time, date: today, items: tray }] }
+      return existing ? { ...current, meals: current.meals.map((meal) => meal.id === existing.id ? { ...meal, items: [...meal.items, ...tray] } : meal) } : { ...current, meals: [...current.meals, { id: crypto.randomUUID(), slot, time: currentSlot?.time ?? timeNow, date: today, items: tray }] }
     })
-    notify(`Refeição confirmada · ${tray.length} itens`); setTray([]); setTrayOpen(false); setPage('Hoje'); window.scrollTo({top:0,behavior:'instant'})
+    notify(`Refeição (${slot}) confirmada · ${tray.length} itens`); setTray([]); setTrayOpen(false); setPage('Hoje'); window.scrollTo({top:0,behavior:'instant'})
   }
+
   function addCombo(combo: Store['combos'][number]) {
     const items = combo.items.flatMap((part) => {
       const food = [...foods, ...store.customFoods].find((entry) => entry.id === part.foodId)
@@ -103,6 +129,7 @@ function App() {
     if (!items.length) { notify('Os alimentos do combo não estão na base TACO.'); return }
     setTray((current)=>[...current,...items]); setTrayOpen(true); notify(`Combo “${combo.name}” adicionado à bandeja.`)
   }
+
   function saveCombo() {
     const selected = Object.entries(grams).filter(([, amount]) => amount > 0)
     if (selected.length < 2) { notify('Escolha ao menos dois alimentos e ajuste as quantidades.'); return }
@@ -111,18 +138,21 @@ function App() {
     setStore((current) => ({ ...current, combos: [...current.combos, { id: crypto.randomUUID(), name, items: selected.map(([id, amount]) => ({ foodId: Number(id), grams: amount })) }] }))
     notify('Combo salvo neste dispositivo.')
   }
+
   function saveComparison() {
-    const value = Number(comparisonInput)
-    if (!professionalConfirmed || value <= 0 || !Number.isFinite(value)) { notify('Confirme um valor recomendado por profissional para ativar a comparação.'); return }
+    const value = sanitizeNumber(comparisonInput, 0, 99999)
+    if (!professionalConfirmed || value <= 0) { notify('Confirme um valor recomendado por profissional para ativar a comparação.'); return }
     setStore((current) => ({ ...current, comparison: value, comparisonConfirmed: true }))
     notify('Parâmetro salvo localmente.')
   }
+
   function streak(predicate: (key: string) => boolean) {
     let count = 0
     const cursor = new Date(`${today}T12:00:00`)
     while (predicate(localDate(cursor))) { count++; cursor.setDate(cursor.getDate() - 1) }
     return count
   }
+
   const creatineStreak = streak((key) => Boolean(store.creatine[key]))
   const waterStreak = streak((key) => (store.water[key] ?? 0) >= store.waterReference)
   const month = today.slice(0, 7)
@@ -135,37 +165,46 @@ function App() {
   const status = water < store.waterReference ? `Faltam ${format(store.waterReference-water)} ml de água para sua referência de hoje` : protein > 0 ? `Você já registrou ${format(protein,1)} g de proteína hoje` : activities.some((item)=>item.kind==='Academia'&&item.done) ? 'Treino registrado · confira suas refeições de hoje' : 'Treino do dia ainda pendente'
 
   function saveBike(km: number, minutes: number, label: string) {
-    setStore((current) => ({ ...current, activities: [...current.activities, { id: crypto.randomUUID(), kind: 'Bike', date: today, done: true, km, minutes, label }] }))
-    setBikeDialog(false); setCustomKm(''); setCustomMinutes(''); notify(`Pedalada registrada · ${format(km, 1)} km`)
+    const cleanKm = sanitizeNumber(km, 0, 999)
+    const cleanMin = sanitizeNumber(minutes, 0, 999)
+    setStore((current) => ({ ...current, activities: [...current.activities, { id: crypto.randomUUID(), kind: 'Bike', date: today, done: true, km: cleanKm, minutes: cleanMin, label }] }))
+    setBikeDialog(false); setCustomKm(''); setCustomMinutes(''); notify(`Pedalada registrada · ${format(cleanKm, 1)} km`)
   }
+
   function addActivity(kind: string) {
     setStore((current) => ({ ...current, activities: [...current.activities, { id: crypto.randomUUID(), kind, date: today, done: true }] }))
     notify(`${kind} registrado.`)
   }
+
   function removeMealItem(mealId: string, itemId: string) {
     setStore((current) => ({ ...current, meals: current.meals.map((meal) => meal.id === mealId ? { ...meal, items: meal.items.filter((item) => item.id !== itemId) } : meal).filter((meal) => meal.items.length) }))
   }
+
   function addExercise() {
     const name = newExercise.trim(); if (!name) return
     setStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: [...current.exercises[trainingGroup], { id: crypto.randomUUID(), name, sets: [{ reps: 12, weight: null }, { reps: 10, weight: null }, { reps: 8, weight: null }] }] } }))
     setNewExercise(''); notify(`Exercício adicionado à ficha ${trainingGroup}.`)
   }
+
   function removeExercise(id: string) { setStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].filter((exercise) => exercise.id !== id) } })) }
   function updateSet(exerciseId: string, setIndex: number, field: 'reps'|'weight', value: number | null) {
     setStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].map((exercise) => exercise.id === exerciseId ? { ...exercise, sets: exercise.sets.map((set, index) => index === setIndex ? { ...set, [field]: value } : set) } : exercise) } }))
   }
   function addSet(exerciseId: string) { setStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].map((exercise) => exercise.id === exerciseId ? { ...exercise, sets: [...exercise.sets, { reps: 8, weight: null }] } : exercise) } })) }
+
   function finishWorkout() {
     setStore((current) => ({ ...current, trainings: [...current.trainings, { id: crypto.randomUUID(), date: today, group: trainingGroup, exercises: current.exercises[trainingGroup].map((exercise) => ({ exerciseId: exercise.id, name: exercise.name, sets: exercise.sets })) }], activities: [...current.activities, { id: crypto.randomUUID(), kind: 'Academia', date: today, done: true }] }))
     notify(`Treino ${trainingGroup} salvo.`)
   }
+
   function saveCustomFood() {
     const name = window.prompt('Nome do alimento/produto')?.trim(); if (!name) return
-    const kcal = Number(window.prompt('kcal por 100 g (ou por unidade para Magic Toast)') || 0)
-    const proteinValue = Number(window.prompt('Proteína em g por 100 g (opcional)') || 0)
+    const kcal = sanitizeNumber(window.prompt('kcal por 100 g (ou por unidade para Magic Toast)') || 0, 0, 9999)
+    const proteinValue = sanitizeNumber(window.prompt('Proteína em g por 100 g (opcional)') || 0, 0, 9999)
     const food: Food = { id: -Date.now(), description: name, category: 'Personalizado · valor informado', energy_kcal: kcal, protein_g: proteinValue, source: 'Estimativa' }
     setStore((current) => ({ ...current, customFoods: [...current.customFoods, food] })); setSearch(name); notify('Alimento personalizado salvo.')
   }
+
   function exportBackup() {
     const blob = new Blob([JSON.stringify(store, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `kake-backup-${today}.json`; a.click(); URL.revokeObjectURL(url); notify('Backup exportado.')
   }
@@ -174,26 +213,500 @@ function App() {
   }
 
   return <div className="app-shell">
-    <header className="topbar"><div className="brand-mark">K</div><div><span className="brand-name">KAKE</span><span className="brand-caption">SEU DIÁRIO PESSOAL</span></div><button className="icon-button" aria-label="Configurações" onClick={() => setPage('Rotina')}>⚙</button></header>
+    <header className="topbar">
+<div className="brand-mark">K</div>
+<div>
+<span className="brand-name">KAKE</span>
+<span className="brand-caption">SEU DIÁRIO PESSOAL</span>
+</div>
+<button className="icon-button" aria-label="Configurações" onClick={() => setPage('Rotina')}>⚙</button>
+</header>
     <main className="main-content">
       {page === 'Hoje' && <>
-        <div className="page-heading"><div><div className="eyebrow">{new Date(`${today}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</div><h1>Seu dia, até agora</h1></div><span className="live-dot">● HOJE</span></div>
-        <section className="status-card"><span className="status-mark">◷</span><div><span className="eyebrow">STATUS DO DIA</span><b>{status}</b></div></section>
-        <section className="card energy-card"><div className="card-heading"><div><span className="eyebrow">ENERGIA · REGISTRO</span><h2>Consumo e movimento</h2></div><span className="icon-orb">↗</span></div><div className="energy-grid"><div className="energy-metric"><span>Consumido hoje</span><strong>{format(calories)} <small>kcal</small></strong></div><div className="energy-metric"><span>Proteína registrada</span><strong>{format(protein, 1)} <small>g</small></strong></div></div>{comparison !== null && <div className="comparison-result"><div className="row"><span>Parâmetro comparativo</span><b>{format(store.comparison!)} kcal</b></div><div className="progress"><i style={{ width: `${Math.min(100, calories / store.comparison! * 100)}%` }} /></div><div className="row remaining-row"><span>Diferença aritmética</span><strong>{format(comparison)} kcal</strong></div></div>}<div className="movement-line"><span className="movement-icon">⌁</span><span>Movimento registrado</span><strong>{activities.filter((item) => item.done).length} atividades</strong></div><details className="comparison-settings"><summary>{comparison === null ? '＋ Configurar parâmetro comparativo' : 'Editar parâmetro comparativo'}</summary><div className="comparison-form"><label htmlFor="comparison">Parâmetro numérico (kcal)</label><input id="comparison" type="number" min="1" inputMode="numeric" placeholder="Vazio por padrão" value={comparisonInput || (comparison !== null ? String(store.comparison) : '')} onChange={(event) => setComparisonInput(event.target.value)} /><label className="checkline"><input type="checkbox" checked={professionalConfirmed} onChange={(event) => setProfessionalConfirmed(event.target.checked)} /> Valor indicado por profissional de saúde.</label><div className="form-actions"><button className="button-primary compact" onClick={saveComparison}>Salvar</button>{comparison !== null && <button className="button-quiet" onClick={() => { setStore((current) => ({ ...current, comparison: null, comparisonConfirmed: false })); setComparisonInput('') }}>Remover</button>}</div></div></details></section>
-        <section className="card water-card"><div className="card-heading"><div><span className="eyebrow">HIDRATAÇÃO · REGISTRO</span><h2>{format(water / 1000, 1)} <small>/ {format(store.waterReference / 1000, 1)} L</small></h2></div><span className="water-icon">◉</span></div><div className="progress water-progress"><i style={{ width: `${Math.min(100, water / Math.max(store.waterReference, 1) * 100)}%` }} /></div><button className="button-primary water-button" onClick={() => setStore((current) => ({ ...current, water: { ...current.water, [today]: water + 500 } }))}>＋ 500 ml · 1 garrafinha</button></section>
-        <section className="card habit-card"><div className="row"><span className="habit-icon">✳</span><b>Creatina 5 g</b><button className={`check-box ${store.creatine[today] ? 'checked' : ''}`} aria-label="Tomar Creatina 5g" onClick={() => setStore((current) => ({ ...current, creatine: { ...current.creatine, [today]: !current.creatine[today] } }))}>{store.creatine[today] ? '✓' : ''}</button><span className="supporting-text">{store.creatine[today] ? 'Tomada' : 'Registrar'}</span></div></section>
-        <div className="section-heading"><div><span className="eyebrow">LINHA DO TEMPO</span><h2>Hoje</h2></div><button className="button-quiet" onClick={() => setPage('Comida')}>+ Registrar</button></div>
-        <section className="timeline card">{SLOTS.map((entry, index) => { const meal = meals.find((item) => item.slot === entry.name); const total = meal?.items.reduce((sum, item) => sum + (item.kcal ?? 0), 0) ?? 0; return <button key={entry.name} className="timeline-item" onClick={() => { setSlot(entry.name); setPage('Comida') }}><span className="timeline-symbol">{['◒', '◉', '↗', '☾', '＋'][index]}</span><span className="timeline-copy"><b>{entry.name}</b><small>{entry.time} · {meal ? `${meal.items.length} itens` : 'Adicionar alimentos'}</small></span><span className="timeline-total">{meal ? `${format(total)} kcal` : '＋'}</span></button> })}<button className="timeline-item" onClick={() => setBikeDialog(true)}><span className="timeline-symbol">⌁</span><span className="timeline-copy"><b>Pedalada</b><small>{format(activities.filter((item) => item.kind === 'Bike').reduce((sum, item) => sum + (item.km ?? 0), 0), 1)} km hoje · registrar trajeto</small></span><span className="timeline-total">＋</span></button></section>
-        {meals.map((meal) => <section className="card meal-detail" key={meal.id}><div className="meal-title"><b>{meal.time} · {meal.slot}</b><button className="button-quiet" onClick={()=>{setSlot(meal.slot);setPage('Comida')}}>＋ Item</button></div>{meal.items.map(item=><div className="food-row detailed-food" key={item.id}><span><b>{item.name}</b><small>{format(item.grams)} g · {item.source==='Estimativa'?'estimativa':'TACO'}</small><small>{item.kcal==null?'kcal n/d':`${format(item.kcal)} kcal`} · {item.protein==null?'proteína n/d':`${format(item.protein,1)} g prot`} · {item.carbs==null?'carb n/d':`${format(item.carbs,1)} g carb`} · {item.fat==null?'gord. n/d':`${format(item.fat,1)} g gord.`}</small></span><button className="remove-button" aria-label={`Excluir ${item.name}`} onClick={()=>removeMealItem(meal.id,item.id)}>⌫</button></div>)}</section>)}
+        <div className="page-heading">
+<div>
+<div className="eyebrow">{new Date(`${today}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
+<h1>Seu dia, até agora</h1>
+</div>
+<span className="live-dot">● HOJE</span>
+</div>
+        <section className="status-card">
+<span className="status-mark">◷</span>
+<div>
+<span className="eyebrow">STATUS DO DIA</span>
+<b>{status}</b>
+</div>
+</section>
+        
+        {/* Metas & Resumo de Energia */}
+        <section className="card energy-card">
+          <div className="card-heading">
+<div>
+<span className="eyebrow">ENERGIA · REGISTRO</span>
+<h2>Consumo e movimento</h2>
+</div>
+<span className="icon-orb">↗</span>
+</div>
+          <div className="energy-grid">
+            <div className="energy-metric">
+<span>Consumido hoje</span>
+<strong>{format(calories)} <small>kcal</small>
+</strong>
+</div>
+            <div className="energy-metric">
+<span>Proteína registrada</span>
+<strong>{format(protein, 1)} <small>g</small>
+</strong>
+</div>
+          </div>
+          {comparison !== null && <div className="comparison-result">
+<div className="row">
+<span>Parâmetro comparativo</span>
+<b>{format(store.comparison!)} kcal</b>
+</div>
+<div className="progress">
+<i style={{ width: `${Math.min(100, calories / store.comparison! * 100)}%` }} />
+</div>
+<div className="row remaining-row">
+<span>Diferença aritmética</span>
+<strong>{format(comparison)} kcal</strong>
+</div>
+</div>}
+          <div className="movement-line">
+<span className="movement-icon">⌁</span>
+<span>Movimento registrado</span>
+<strong>{activities.filter((item) => item.done).length} atividades</strong>
+</div>
+          <details className="comparison-settings">
+<summary>{comparison === null ? '＋ Configurar parâmetro comparativo' : 'Editar parâmetro comparativo'}</summary>
+<div className="comparison-form">
+<label htmlFor="comparison">Parâmetro numérico (kcal)</label>
+<input id="comparison" type="number" min="0" max="99999" onKeyDown={blockInvalidChars} inputMode="numeric" placeholder="Vazio por padrão" value={comparisonInput || (comparison !== null ? String(store.comparison) : '')} onChange={(event) => setComparisonInput(event.target.value)} />
+<label className="checkline">
+<input type="checkbox" checked={professionalConfirmed} onChange={(event) => setProfessionalConfirmed(event.target.checked)} /> Valor indicado por profissional de saúde.</label>
+<div className="form-actions">
+<button className="button-primary compact" onClick={saveComparison}>Salvar</button>{comparison !== null && <button className="button-quiet" onClick={() => { setStore((current) => ({ ...current, comparison: null, comparisonConfirmed: false })); setComparisonInput('') }}>Remover</button>}</div>
+</div>
+</details>
+        </section>
+
+        {/* Hidratação & Creatina */}
+        <section className="card water-card">
+<div className="card-heading">
+<div>
+<span className="eyebrow">HIDRATAÇÃO · REGISTRO</span>
+<h2>{format(water / 1000, 1)} <small>/ {format(store.waterReference / 1000, 1)} L</small>
+</h2>
+</div>
+<span className="water-icon">◉</span>
+</div>
+<div className="progress water-progress">
+<i style={{ width: `${Math.min(100, water / Math.max(store.waterReference, 1) * 100)}%` }} />
+</div>
+<button className="button-primary water-button" onClick={() => setStore((current) => ({ ...current, water: { ...current.water, [today]: water + 500 } }))}>＋ 500 ml · 1 garrafinha</button>
+</section>
+        <section className="card habit-card">
+<div className="row">
+<span className="habit-icon">✳</span>
+<b>Creatina 5 g</b>
+<button className={`check-box ${store.creatine[today] ? 'checked' : ''}`} aria-label="Tomar Creatina 5g" onClick={() => setStore((current) => ({ ...current, creatine: { ...current.creatine, [today]: !current.creatine[today] } }))}>{store.creatine[today] ? '✓' : ''}</button>
+<span className="supporting-text">{store.creatine[today] ? 'Tomada' : 'Registrar'}</span>
+</div>
+</section>
+
+        {/* Ações Rápidas */}
+        <div className="quick-actions-bar">
+          <button className="quick-action-button primary-action" onClick={() => { setSlot(getAutoSlot()); setPage('Comida'); }}>
+            <span className="action-icon">＋</span>
+            <div className="action-text">
+              <b>Registrar alimento</b>
+              <small>Auto: {getAutoSlot()}</small>
+            </div>
+          </button>
+          <button className="quick-action-button" onClick={() => setBikeDialog(true)}>
+            <span className="action-icon">⌁</span>
+            <div className="action-text">
+              <b>Pedalada</b>
+              <small>{format(activities.filter((item) => item.kind === 'Bike').reduce((sum, item) => sum + (item.km ?? 0), 0), 1)} km hoje</small>
+            </div>
+          </button>
+        </div>
+
+        {/* Lista de Alimentos Consumidos Aberta e Visível */}
+        <div className="section-heading">
+          <div>
+<span className="eyebrow">ALIMENTOS CONSUMIDOS HOJE</span>
+<h2>Refeições do dia ({eaten.length})</h2>
+</div>
+          <button className="button-quiet" onClick={() => { setSlot(getAutoSlot()); setPage('Comida'); }}>+ Adicionar</button>
+        </div>
+
+        {meals.length === 0 || eaten.length === 0 ? (
+          <section className="card empty-meals-card">
+            <p className="empty-state">Nenhum alimento registrado hoje ainda.<br />Toque no botão <b>"Registrar alimento"</b> acima para adicionar seu primeiro consumo.</p>
+          </section>
+        ) : (
+          <div className="meals-feed">
+            {meals.map((meal) => (
+              <section className="card meal-detail" key={meal.id}>
+                <div className="meal-title">
+                  <div className="meal-title-group">
+                    <span className="meal-tag-pill">{meal.slot}</span>
+                    <span className="meal-time-tag">◷ {meal.time}</span>
+                  </div>
+                  <button className="button-quiet compact" onClick={() => { setSlot(meal.slot); setPage('Comida'); }}>＋ Item</button>
+                </div>
+                <div className="meal-items-wrap">
+                  {meal.items.map((item) => (
+                    <div className="food-row detailed-food" key={item.id}>
+                      <div className="food-info-block">
+                        <div className="food-main-line">
+                          <b>{item.name}</b>
+                          <span className="grams-pill">{format(item.grams)} g</span>
+                        </div>
+                        <div className="macro-badge">
+                          <span className="macro-kcal">🔥 <b>{item.kcal == null ? 'n/d' : `${format(item.kcal)} kcal`}</b>
+</span>
+                          <span className="macro-sep">·</span>
+                          <span title="Proteínas">P: <b>{item.protein == null ? '0' : format(item.protein, 1)}g</b>
+</span>
+                          <span className="macro-sep">·</span>
+                          <span title="Carboidratos">C: <b>{item.carbs == null ? '0' : format(item.carbs, 1)}g</b>
+</span>
+                          <span className="macro-sep">·</span>
+                          <span title="Gorduras">G: <b>{item.fat == null ? '0' : format(item.fat, 1)}g</b>
+</span>
+                        </div>
+                      </div>
+                      <button className="delete-btn" title={`Excluir ${item.name}`} aria-label={`Excluir ${item.name}`} onClick={() => { removeMealItem(meal.id, item.id); notify(`${item.name} removido.`); }}>
+                        🗑️
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
       </>}
-      {page === 'Comida' && <><div className="page-heading"><div><div className="eyebrow">BASE TACO E PRODUTOS · POR GRAMAS</div><h1>Montar refeição</h1></div><span className="badge">{allFoods.length} itens</span></div><label className="field-label" htmlFor="meal-slot">Refeição</label><select id="meal-slot" className="select-input" value={slot} onChange={(event) => setSlot(event.target.value as Slot)}>{SLOTS.map((entry) => <option key={entry.name} value={entry.name}>{entry.name} · {entry.time}</option>)}</select><div className="search-wrap"><label className="search-box"><span>⌕</span><input aria-label="Buscar alimento" placeholder="Buscar alimento ou produto…" autoComplete="off" value={search} onChange={(event) => setSearch(event.target.value)} /><kbd>TACO</kbd></label>{query && <div className="suggestions">{matches.slice(0, 7).map((food) => <button key={food.id} onClick={() => { setSearch(food.description); document.getElementById(`food-${food.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}>{food.description}</button>)}</div>}</div><button className="button-quiet full-width" onClick={saveCustomFood}>＋ Criar alimento/produto personalizado</button><section className={`tray-panel ${trayOpen?"tray-expanded":"tray-collapsed"}`}><div className="combo-title"><b>Bandeja de seleção · {tray.length}</b><button className="button-quiet" onClick={()=>setTrayOpen(value=>!value)}>{trayOpen?"Recolher":"Abrir bandeja"}</button></div>{trayOpen&&<><div className="combo-title"><b>Bandeja de seleção · {tray.length}</b><button className="button-quiet" onClick={()=>setTray([])}>Limpar</button></div>{tray.map(item=><div className="food-row" key={item.id}><span>{item.name} <small>{format(item.grams)} g · {format(item.kcal??0)} kcal · {format(item.protein??0,1)} g prot</small></span><button className="remove-button" aria-label={`Remover ${item.name} da bandeja`} onClick={()=>setTray(current=>current.filter(entry=>entry.id!==item.id))}>×</button></div>)}<button className="button-primary water-button" onClick={confirmMeal}>Confirmar refeição</button><button className="button-quiet full-width" onClick={saveCombo}>Salvar seleção como combo</button></>}</section><div className="combo-panel"><div className="combo-title"><b>Meus combos</b></div>{store.combos.map((combo) => <div className="combo-row" key={combo.id}><button onClick={() => addCombo(combo)}><span><b>{combo.name}</b><small>{combo.items.length} itens · adicionar à bandeja</small></span></button><button className="remove-button" aria-label={`Excluir combo ${combo.name}`} onClick={()=>setStore(current=>({...current,combos:current.combos.filter(x=>x.id!==combo.id)}))}>×</button></div>)}</div><div className="food-list">{matches.map((food) => <article className="food-card" id={`food-${food.id}`} key={food.id} onClick={()=>{}}><div className="food-copy"><b>{food.description}</b><small>{food.category} · {food.source ?? 'TACO'}</small><small>{numeric(food.energy_kcal) === null ? 'Energia n/d' : `${format(numeric(food.energy_kcal)!)} kcal`} · {numeric(food.protein_g) === null ? 'proteína n/d' : `${format(numeric(food.protein_g)!, 1)} g`} / 100 g</small><div className="measure-controls">{[-10,10,50,100].map(delta=><button key={delta} onClick={()=>setGrams(current=>({...current,[food.id]:Math.max(0,(current[food.id]??100)+delta)}))}>{delta>0?'+':''}{delta}g</button>)}<button onClick={()=>setGrams(current=>({...current,[food.id]:0}))}>Zerar</button></div><div className="serving-controls">{Object.entries(store.servings).map(([label,amount])=><button key={label} onClick={()=>setGrams(current=>({...current,[food.id]:(current[food.id]??100)+amount}))}>+1 {label} (+{amount}g)</button>)}</div></div><div className="food-add"><label><input aria-label={`Gramas de ${food.description}`} type="number" min="0" inputMode="decimal" value={grams[food.id]??100} onChange={event=>setGrams(current=>({...current,[food.id]:Number(event.target.value)||0}))}/><span>g</span></label><button className="add-food-button" onClick={()=>addFood(food)}>Adicionar</button></div></article>)}{!matches.length&&<div className="empty-state">Nenhum alimento encontrado.</div>}</div></>}
-      {page === 'Movimento' && <><div className="page-heading"><div><div className="eyebrow">REGISTRO PESSOAL</div><h1>Movimento</h1></div></div><div className="activity-options">{['Academia', 'Educação Física · vôlei', 'Passos · registro manual'].map((kind) => <button key={kind} className="activity-option" onClick={() => addActivity(kind)}><span className="activity-check">＋</span>{kind}</button>)}<button className="activity-option" onClick={() => setBikeDialog(true)}><span className="activity-check">＋</span>Registrar pedalada</button></div><h2 className="subheading">Atividades de hoje</h2>{activities.map((activity) => <div className="activity-row" key={activity.id}><span className={`check-box ${activity.done ? 'checked' : ''}`}>{activity.done ? '✓' : ''}</span><span>{activity.kind}{activity.label ? ` · ${activity.label}` : ''}{activity.km ? ` · ${format(activity.km, 1)} km` : ''}</span></div>)}</>}
-      {page === 'Treinos' && <><div className="page-heading"><div><div className="eyebrow">FICHAS PESSOAIS</div><h1>Treino {trainingGroup}</h1><p className="supporting-text">{trainingGroup==='A'?'Peito e Bíceps':trainingGroup==='B'?'Pernas':'Costas e Tríceps'}</p></div><button className="button-primary compact" onClick={finishWorkout}>Finalizar treino</button></div><div className="group-tabs">{(['A','B','C'] as const).map(group=><button key={group} className={trainingGroup===group?'selected':''} onClick={()=>setTrainingGroup(group)}>Treino {group}<small>{group==='A'?'Peito e bíceps':group==='B'?'Pernas':'Costas e tríceps'}</small></button>)}</div><div className="add-exercise"><input value={newExercise} onChange={event=>setNewExercise(event.target.value)} placeholder="Nome do exercício"/><button className="button-primary compact" onClick={addExercise}>Adicionar</button></div>{store.exercises[trainingGroup].length===0&&<div className="empty-state">Sua ficha está vazia. Adicione os exercícios indicados pelo treinador.</div>}{store.exercises[trainingGroup].map(exercise=>{const previous=store.trainings.slice().reverse().flatMap(training=>training.exercises.filter(item=>item.exerciseId===exercise.id));return <section className="card exercise-card" key={exercise.id}><div className="exercise-heading"><h2>{exercise.name}</h2><button className="remove-button" aria-label={`Excluir ${exercise.name}`} onClick={()=>removeExercise(exercise.id)}>×</button></div><div className="sets-head"><span>Série</span><span>Reps</span><span>Peso kg</span></div>{exercise.sets.map((set,index)=><div className="set-row" key={index}><span>{index+1}</span><input type="number" min="1" value={set.reps} aria-label={`Série ${index+1} repetições`} onChange={event=>updateSet(exercise.id,index,'reps',Number(event.target.value)||0)}/><input type="number" min="0" step="0.5" value={set.weight??''} placeholder="—" aria-label={`Série ${index+1} peso kg`} onChange={event=>updateSet(exercise.id,index,'weight',event.target.value===''?null:Number(event.target.value))}/></div>)}<button className="button-quiet" onClick={()=>addSet(exercise.id)}>＋ Adicionar série</button>{previous.length>0&&<div className="load-history"><b>Último treino</b><small>{previous[previous.length-1].sets.map((set,index)=>`S${index+1}: ${set.reps} reps · ${set.weight??'—'} kg`).join(' / ')}</small></div>}</section>})}</>}
-      {page === 'Avaliação' && <><div className="page-heading"><div><div className="eyebrow">REGISTRO DE MEDIDAS</div><h1>Avaliação física</h1></div></div><form className="card assessment-form" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const next: Measure = { id: crypto.randomUUID(), date: String(form.get('date')), weight: Number(form.get('weight')) || undefined, bodyFat: Number(form.get('bodyFat')) || undefined, muscle: Number(form.get('muscle')) || undefined, hydration: Number(form.get('hydration')) || undefined, waist: Number(form.get('waist')) || undefined, chest: Number(form.get('chest')) || undefined, arm: Number(form.get('arm')) || undefined }; setStore((current) => ({ ...current, measures: [...current.measures, next].sort((a, b) => a.date.localeCompare(b.date)) })); notify('Avaliação salva localmente.'); event.currentTarget.reset() }}><label>Data do exame<input type="date" name="date" required defaultValue={today} /></label>{([['weight', 'Peso corporal (kg)'], ['bodyFat', 'Gordura corporal (%)'], ['muscle', 'Massa muscular / massa magra (kg)'], ['hydration', 'Hidratação (%)'], ['waist', 'Cintura (cm)'], ['chest', 'Tórax / peitoral (cm)'], ['arm', 'Braço / bíceps (cm)']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" name={key} step="0.1" /></label>)}<button className="button-primary">Salvar avaliação</button></form><section className="card"><h2>Comparação com a anterior</h2>{comparisonPrevious.length < 2 ? <p className="supporting-text">Registre duas avaliações para comparar medidas.</p> : (() => { const [previous, current] = comparisonPrevious; return <div className="compare-row">{(['bodyFat', 'muscle', 'waist', 'weight', 'hydration', 'chest', 'arm'] as const).map((key) => previous[key] != null && current[key] != null && <span key={key}>{key}: {format(current[key]! - previous[key]!, 1)} {key === 'bodyFat' || key === 'hydration' ? 'p.p.' : key === 'weight' || key === 'muscle' ? 'kg' : 'cm'}</span>)}</div> })()}</section></>}      {page === 'Evolução' && <><div className="page-heading"><div><div className="eyebrow">CONSISTÊNCIA PESSOAL</div><h1>Sua evolução</h1></div></div><div className="stats-grid"><div className="energy-metric"><span>Treinos no mês</span><strong>{monthWorkouts}</strong></div><div className="energy-metric"><span>Km de bike no mês</span><strong>{format(monthKm,1)}</strong></div><div className="energy-metric"><span>Média de água</span><strong>{format(waterAverage/1000,1)} <small>L</small></strong></div><div className="energy-metric"><span>Dias creatina seguidos</span><strong>{creatineStreak}</strong></div></div><section className="card"><h2>Conquistas</h2><div className="badge-grid">{[['medal','Semana de Ferro','4 treinos',monthWorkouts>=4],['drop','Mestre da Água','5 dias',waterStreak>=5],['bolt','Velocista da Bike','40 km',monthKm>=40],['capsule','Hábito Sagrado','7 dias',creatineStreak>=7]].map(([icon,name,detail,unlocked])=><div className={`badge-item ${unlocked?'unlocked':''}`} key={String(name)}><span className="svg-badge">{icon==='medal'?<svg viewBox="0 0 24 24"><path d="M8 3h8l3 5-7 5-7-5 3-5Z"/><circle cx="12" cy="15" r="6"/></svg>:icon==='drop'?<svg viewBox="0 0 24 24"><path d="M12 3s7 7 7 12a7 7 0 1 1-14 0c0-5 7-12 7-12Z"/></svg>:icon==='bolt'?<svg viewBox="0 0 24 24"><path d="m13 2-9 12h7l-1 8 10-13h-7z"/></svg>:<svg viewBox="0 0 24 24"><path d="M4 8a4 4 0 0 1 4-4h8a4 4 0 0 1 0 8H8a4 4 0 0 1-4-4Z"/></svg>}</span><b>{name}</b><small>{detail}</small><em>{unlocked?'Desbloqueado':'Em andamento'}</em></div>)}</div></section><section className="card"><h2>Mapa de consistência</h2><p className="supporting-text">Pilares diários registrados.</p><div className="heatmap">{Array.from({length:todayNumber},(_,index)=>{const day=String(index+1).padStart(2,'0'),key=`${month}-${day}`;const points=Number(store.meals.some(meal=>meal.date===key))+Number((store.water[key]??0)>=store.waterReference)+Number(store.creatine[key])+Number(store.trainings.some(training=>training.date===key));return <span key={key} className={`heat heat-${points}`} title={`${key}: ${points} pilares`}>{index+1}</span>})}</div></section></>}      {page === 'Treinos' && <><div className="page-heading"><div><div className="eyebrow">FICHAS PESSOAIS</div><h1>Treino {trainingGroup}</h1><p className="supporting-text">{trainingGroup==='A'?'Peito e Bíceps':trainingGroup==='B'?'Pernas':'Costas e Tríceps'}</p></div><button className="button-primary compact" onClick={finishWorkout}>Finalizar treino</button></div><div className="group-tabs">{(['A','B','C'] as const).map(group=><button key={group} className={trainingGroup===group?'selected':''} onClick={()=>setTrainingGroup(group)}>Treino {group}<small>{group==='A'?'Peito e Bíceps':group==='B'?'Pernas':'Costas e Tríceps'}</small></button>)}</div><div className="add-exercise"><input value={newExercise} onChange={event=>setNewExercise(event.target.value)} placeholder="Nome do exercício"/><button className="button-primary compact" onClick={addExercise}>Adicionar</button></div>{store.exercises[trainingGroup].length===0&&<div className="empty-state">Sua ficha está vazia. Adicione os exercícios do treinador.</div>}{store.exercises[trainingGroup].map(exercise=>{const previous=store.trainings.slice().reverse().flatMap(training=>training.exercises.filter(item=>item.exerciseId===exercise.id));return <section className="card exercise-card" key={exercise.id}><div className="exercise-heading"><h2>{exercise.name}</h2><button className="remove-button" aria-label={`Excluir ${exercise.name}`} onClick={()=>removeExercise(exercise.id)}>×</button></div><div className="sets-head"><span>Série</span><span>Reps</span><span>Peso kg</span></div>{exercise.sets.map((set,index)=><div className="set-row" key={index}><span>{index+1}</span><input type="number" min="1" value={set.reps} aria-label={`Série ${index+1} repetições`} onChange={event=>updateSet(exercise.id,index,'reps',Number(event.target.value)||0)}/><input type="number" min="0" step="0.5" value={set.weight??''} placeholder="—" aria-label={`Série ${index+1} peso kg`} onChange={event=>updateSet(exercise.id,index,'weight',event.target.value===''?null:Number(event.target.value))}/></div>)}<button className="button-quiet" onClick={()=>addSet(exercise.id)}>＋ Adicionar série</button>{previous.length>0&&<div className="load-history"><b>Último treino</b><small>{previous[previous.length-1].sets.map((set,index)=>`S${index+1}: ${set.reps} reps · ${set.weight??'—'} kg`).join(' / ')}</small></div>}</section>})}</>}{page === 'Rotina' && <><div className="page-heading"><div><div className="eyebrow">PREFERÊNCIAS LOCAIS</div><h1>Configurações</h1></div></div><section className="card setting-card"><h2>Backup completo</h2><p className="supporting-text">Exporte seus registros ou restaure um arquivo JSON.</p><div className="settings-actions"><button className="button-primary compact" onClick={exportBackup}>Exportar backup</button><label className="button-quiet import-button">Importar JSON<input type="file" accept="application/json,.json" onChange={event=>importBackup(event.target.files?.[0])}/></label></div></section><section className="card setting-card"><h2>Alimentos e combos</h2><p className="supporting-text">{store.combos.length} combos · {store.customFoods.length} alimentos personalizados</p>{store.combos.map(combo=><div className="manage-row" key={combo.id}><span>{combo.name}</span><button className="remove-button" onClick={()=>setStore(current=>({...current,combos:current.combos.filter(item=>item.id!==combo.id)}))}>Excluir</button></div>)}{store.customFoods.map(food=><div className="manage-row" key={food.id}><span>{food.description}</span><button className="remove-button" onClick={()=>setStore(current=>({...current,customFoods:current.customFoods.filter(item=>item.id!==food.id)}))}>Excluir</button></div>)}</section><section className="card setting-card"><h2>Medidas caseiras</h2>{Object.entries(store.servings).map(([name,value])=><label className="setting-input-row" key={name}>{name}<input type="number" min="1" value={value} onChange={event=>setStore(current=>({...current,servings:{...current.servings,[name]:Number(event.target.value)||1}}))}/> g</label>)}<label className="setting-input-row">Garrafa de água<input type="number" min="50" value={store.bottleMl} onChange={event=>setStore(current=>({...current,bottleMl:Number(event.target.value)||500}))}/> ml</label></section><section className="card setting-card"><h2>Integrações futuras</h2><label className="field-label" htmlFor="ai-key">Chave de API de IA (opcional)</label><input id="ai-key" type="password" autoComplete="off" placeholder="Não configurada" value={apiKey} onChange={event=>setApiKey(event.target.value)}/><p className="supporting-text">Campo apenas visual nesta versão; nenhuma chave é enviada ou salva.</p></section><section className="card setting-card"><h2>Armazenamento local</h2><p className="supporting-text">Seus registros ficam neste navegador.</p><button className="button-quiet" onClick={() => { if (window.confirm('Apagar todos os registros locais?')) { localStorage.removeItem(KEY); setStore(empty); notify('Registros locais apagados.') } }}>Apagar meus dados</button></section><section className="card setting-card"><h2>Fonte TACO</h2><p className="supporting-text">Nutrientes por 100 g. Campos indisponíveis não são convertidos em zero.</p><a className="source-link" href="/data/TACO-LICENSE" target="_blank" rel="noreferrer">Ver licença MIT</a></section></>}
+
+      {page === 'Comida' && <>
+        <div className="page-heading">
+          <div>
+<div className="eyebrow">REGISTRO RÁPIDO · BASE TACO</div>
+<h1>Montar refeição</h1>
+</div>
+          <span className="badge">{allFoods.length} itens</span>
+        </div>
+
+        {/* Tagueamento da Refeição: Pré-seleção automática baseada no horário atual */}
+        <div className="card slot-card">
+          <div className="slot-header-line">
+            <span className="eyebrow">TAG DA REFEIÇÃO</span>
+            <span className="auto-pill">Detectado: {getAutoSlot()}</span>
+          </div>
+          <div className="slot-control-row">
+            <select id="meal-slot" className="select-input" value={slot} onChange={(event) => setSlot(event.target.value as Slot)}>
+              {SLOTS.map((entry) => <option key={entry.name} value={entry.name}>{entry.name} {entry.time !== 'Livre' ? `(${entry.time})` : ''}</option>)}
+            </select>
+            <button type="button" className="button-quiet" onClick={() => { const auto = getAutoSlot(); setSlot(auto); notify(`Ajustado para ${auto}`); }}>
+              🕒 Horário atual
+            </button>
+          </div>
+        </div>
+
+        <div className="search-wrap">
+          <label className="search-box">
+            <span>⌕</span>
+            <input aria-label="Buscar alimento" placeholder="Buscar alimento ou produto…" autoComplete="off" value={search} onChange={(event) => setSearch(event.target.value)} />
+            <kbd>TACO</kbd>
+          </label>
+          {query && <div className="suggestions">{matches.slice(0, 7).map((food) => <button key={food.id} onClick={() => { setSearch(food.description); document.getElementById(`food-${food.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}>{food.description}</button>)}</div>}
+        </div>
+
+        <button className="button-quiet full-width" onClick={saveCustomFood}>＋ Criar alimento/produto personalizado</button>
+
+        {/* Bandeja de Seleção */}
+        <section className={`tray-panel ${trayOpen?"tray-expanded":"tray-collapsed"}`}>
+          <div className="combo-title">
+<b>Bandeja de seleção · {tray.length}</b>
+<button className="button-quiet" onClick={()=>setTrayOpen(value=>!value)}>{trayOpen?"Recolher":"Abrir bandeja"}</button>
+</div>
+          {trayOpen && <>
+            <div className="combo-title">
+<b>Bandeja de seleção · {tray.length}</b>
+<button className="button-quiet" onClick={()=>setTray([])}>Limpar</button>
+</div>
+            {tray.map(item => (
+              <div className="food-row" key={item.id}>
+                <span>{item.name} <small>{format(item.grams)} g · {format(item.kcal??0)} kcal · {format(item.protein??0,1)} g prot</small>
+</span>
+                <button className="remove-button" aria-label={`Remover ${item.name} da bandeja`} onClick={()=>setTray(current=>current.filter(entry=>entry.id!==item.id))}>×</button>
+              </div>
+            ))}
+            <button className="button-primary water-button" onClick={confirmMeal}>Confirmar refeição ({slot})</button>
+            <button className="button-quiet full-width" onClick={saveCombo}>Salvar seleção como combo</button>
+          </>}
+        </section>
+
+        {/* Combos */}
+        <div className="combo-panel">
+          <div className="combo-title">
+<b>Meus combos</b>
+</div>
+          {store.combos.map((combo) => (
+            <div className="combo-row" key={combo.id}>
+              <button onClick={() => addCombo(combo)}>
+<span>
+<b>{combo.name}</b>
+<small>{combo.items.length} itens · adicionar à bandeja</small>
+</span>
+</button>
+              <button className="remove-button" aria-label={`Excluir combo ${combo.name}`} onClick={()=>setStore(current=>({...current,combos:current.combos.filter(x=>x.id!==combo.id)}))}>×</button>
+            </div>
+          ))}
+        </div>
+
+        {/* Lista de Alimentos com Validação Cirúrgica */}
+        <div className="food-list">
+          {matches.map((food) => (
+            <article className="food-card" id={`food-${food.id}`} key={food.id}>
+              <div className="food-copy">
+                <b>{food.description}</b>
+                <small>{food.category} · {food.source ?? 'TACO'}</small>
+                <small>{numeric(food.energy_kcal) === null ? 'Energia n/d' : `${format(numeric(food.energy_kcal)!)} kcal`} · {numeric(food.protein_g) === null ? 'proteína n/d' : `${format(numeric(food.protein_g)!, 1)} g`} / 100 g</small>
+                <div className="measure-controls">
+                  {[-10, 10, 50, 100].map(delta => (
+                    <button key={delta} type="button" onClick={() => setGrams(current => ({ ...current, [food.id]: Math.min(9999, Math.max(0, (current[food.id] ?? 100) + delta)) }))}>
+                      {delta > 0 ? '+' : ''}{delta}g
+                    </button>
+                  ))}
+                  <button type="button" onClick={() => setGrams(current => ({ ...current, [food.id]: 0 }))}>Zerar</button>
+                </div>
+                <div className="serving-controls">
+                  {Object.entries(store.servings).map(([label, amount]) => (
+                    <button key={label} type="button" onClick={() => setGrams(current => ({ ...current, [food.id]: Math.min(9999, Math.max(0, (current[food.id] ?? 100) + amount)) }))}>
+                      +1 {label} (+{amount}g)
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="food-add">
+                <label>
+                  <input
+                    aria-label={`Gramas de ${food.description}`}
+                    type="number"
+                    min="0"
+                    max="9999"
+                    inputMode="decimal"
+                    placeholder="100"
+                    value={grams[food.id] ?? 100}
+                    onKeyDown={blockInvalidChars}
+                    onChange={event => {
+                      const v = event.target.value
+                      setGrams(current => ({ ...current, [food.id]: v === '' ? 0 : sanitizeNumber(v, 0, 9999) }))
+                    }}
+                  />
+                  <span>g</span>
+                </label>
+                <button className="add-food-button" onClick={() => addFood(food)}>Adicionar</button>
+              </div>
+            </article>
+          ))}
+          {!matches.length && <div className="empty-state">Nenhum alimento encontrado.</div>}
+        </div>
+      </>}
+
+      {page === 'Movimento' && <>
+<div className="page-heading">
+<div>
+<div className="eyebrow">REGISTRO PESSOAL</div>
+<h1>Movimento</h1>
+</div>
+</div>
+<div className="activity-options">{['Academia', 'Educação Física · vôlei', 'Passos · registro manual'].map((kind) => <button key={kind} className="activity-option" onClick={() => addActivity(kind)}>
+<span className="activity-check">＋</span>{kind}</button>)}<button className="activity-option" onClick={() => setBikeDialog(true)}>
+<span className="activity-check">＋</span>Registrar pedalada</button>
+</div>
+<h2 className="subheading">Atividades de hoje</h2>{activities.map((activity) => <div className="activity-row" key={activity.id}>
+<span className={`check-box ${activity.done ? 'checked' : ''}`}>{activity.done ? '✓' : ''}</span>
+<span>{activity.kind}{activity.label ? ` · ${activity.label}` : ''}{activity.km ? ` · ${format(activity.km, 1)} km` : ''}</span>
+</div>)}</>}
+
+      {page === 'Treinos' && <>
+<div className="page-heading">
+<div>
+<div className="eyebrow">FICHAS PESSOAIS</div>
+<h1>Treino {trainingGroup}</h1>
+<p className="supporting-text">{trainingGroup==='A'?'Peito e Bíceps':trainingGroup==='B'?'Pernas':'Costas e Tríceps'}</p>
+</div>
+<button className="button-primary compact" onClick={finishWorkout}>Finalizar treino</button>
+</div>
+<div className="group-tabs">{(['A','B','C'] as const).map(group=>
+<button key={group} className={trainingGroup===group?'selected':''} onClick={()=>setTrainingGroup(group)}>Treino {group}<small>{group==='A'?'Peito e bíceps':group==='B'?'Pernas':'Costas e tríceps'}</small>
+</button>)}</div>
+<div className="add-exercise">
+<input value={newExercise} onChange={event=>setNewExercise(event.target.value)} placeholder="Nome do exercício"/>
+<button className="button-primary compact" onClick={addExercise}>Adicionar</button>
+</div>{store.exercises[trainingGroup].length===0&&<div className="empty-state">Sua ficha está vazia. Adicione os exercícios indicados pelo treinador.</div>}{store.exercises[trainingGroup].map(exercise=>{const previous=store.trainings.slice().reverse().flatMap(training=>training.exercises.filter(item=>item.exerciseId===exercise.id));return <section className="card exercise-card" key={exercise.id}>
+<div className="exercise-heading">
+<h2>{exercise.name}</h2>
+<button className="remove-button" aria-label={`Excluir ${exercise.name}`} onClick={()=>removeExercise(exercise.id)}>×</button>
+</div>
+<div className="sets-head">
+<span>Série</span>
+<span>Reps</span>
+<span>Peso kg</span>
+</div>{exercise.sets.map((set,index)=>
+<div className="set-row" key={index}>
+<span>{index+1}</span>
+<input type="number" min="0" max="999" onKeyDown={blockInvalidChars} value={set.reps} aria-label={`Série ${index+1} repetições`} onChange={event=>updateSet(exercise.id,index,'reps',sanitizeNumber(event.target.value, 0, 999))}/>
+<input type="number" min="0" max="999" step="0.5" onKeyDown={blockInvalidChars} value={set.weight??''} placeholder="—" aria-label={`Série ${index+1} peso kg`} onChange={event=>updateSet(exercise.id,index,'weight',event.target.value===''?null:sanitizeNumber(event.target.value, 0, 999))}/>
+</div>)}<button className="button-quiet" onClick={()=>addSet(exercise.id)}>＋ Adicionar série</button>{previous.length>0&&<div className="load-history">
+<b>Último treino</b>
+<small>{previous[previous.length-1].sets.map((set,index)=>`S${index+1}: ${set.reps} reps · ${set.weight??'—'} kg`).join(' / ')}</small>
+</div>}</section>})}</>}
+
+      {page === 'Avaliação' && <>
+<div className="page-heading">
+<div>
+<div className="eyebrow">REGISTRO DE MEDIDAS</div>
+<h1>Avaliação física</h1>
+</div>
+</div>
+<form className="card assessment-form" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const next: Measure = { id: crypto.randomUUID(), date: String(form.get('date')), weight: sanitizeNumber(String(form.get('weight')), 0, 999) || undefined, bodyFat: sanitizeNumber(String(form.get('bodyFat')), 0, 100) || undefined, muscle: sanitizeNumber(String(form.get('muscle')), 0, 999) || undefined, hydration: sanitizeNumber(String(form.get('hydration')), 0, 100) || undefined, waist: sanitizeNumber(String(form.get('waist')), 0, 999) || undefined, chest: sanitizeNumber(String(form.get('chest')), 0, 999) || undefined, arm: sanitizeNumber(String(form.get('arm')), 0, 999) || undefined }; setStore((current) => ({ ...current, measures: [...current.measures, next].sort((a, b) => a.date.localeCompare(b.date)) })); notify('Avaliação salva localmente.'); event.currentTarget.reset() }}>
+<label>Data do exame<input type="date" name="date" required defaultValue={today} />
+</label>{([['weight', 'Peso corporal (kg)'], ['bodyFat', 'Gordura corporal (%)'], ['muscle', 'Massa muscular / massa magra (kg)'], ['hydration', 'Hidratação (%)'], ['waist', 'Cintura (cm)'], ['chest', 'Tórax / peitoral (cm)'], ['arm', 'Braço / bíceps (cm)']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min="0" max="999" step="0.1" name={key} onKeyDown={blockInvalidChars} />
+</label>)}<button className="button-primary">Salvar avaliação</button>
+</form>
+<section className="card">
+<h2>Comparação com a anterior</h2>{comparisonPrevious.length < 2 ? <p className="supporting-text">Registre duas avaliações para comparar medidas.</p> : (() => { const [previous, current] = comparisonPrevious; return <div className="compare-row">{(['bodyFat', 'muscle', 'waist', 'weight', 'hydration', 'chest', 'arm'] as const).map((key) => previous[key] != null && current[key] != null && <span key={key}>{key}: {format(current[key]! - previous[key]!, 1)} {key === 'bodyFat' || key === 'hydration' ? 'p.p.' : key === 'weight' || key === 'muscle' ? 'kg' : 'cm'}</span>)}</div> })()}</section>
+</>}
+
+      {page === 'Evolução' && <>
+<div className="page-heading">
+<div>
+<div className="eyebrow">CONSISTÊNCIA PESSOAL</div>
+<h1>Sua evolução</h1>
+</div>
+</div>
+<div className="stats-grid">
+<div className="energy-metric">
+<span>Treinos no mês</span>
+<strong>{monthWorkouts}</strong>
+</div>
+<div className="energy-metric">
+<span>Km de bike no mês</span>
+<strong>{format(monthKm,1)}</strong>
+</div>
+<div className="energy-metric">
+<span>Média de água</span>
+<strong>{format(waterAverage/1000,1)} <small>L</small>
+</strong>
+</div>
+<div className="energy-metric">
+<span>Dias creatina seguidos</span>
+<strong>{creatineStreak}</strong>
+</div>
+</div>
+<section className="card">
+<h2>Conquistas</h2>
+<div className="badge-grid">{[['medal','Semana de Ferro','4 treinos',monthWorkouts>=4],['drop','Mestre da Água','5 dias',waterStreak>=5],['bolt','Velocista da Bike','40 km',monthKm>=40],['capsule','Hábito Sagrado','7 dias',creatineStreak>=7]].map(([icon,name,detail,unlocked])=>
+<div className={`badge-item ${unlocked?'unlocked':''}`} key={String(name)}>
+<span className="svg-badge">{icon==='medal'?<svg viewBox="0 0 24 24">
+<path d="M8 3h8l3 5-7 5-7-5 3-5Z"/>
+<circle cx="12" cy="15" r="6"/>
+</svg>:icon==='drop'?<svg viewBox="0 0 24 24">
+<path d="M12 3s7 7 7 12a7 7 0 1 1-14 0c0-5 7-12 7-12Z"/>
+</svg>:icon==='bolt'?<svg viewBox="0 0 24 24">
+<path d="m13 2-9 12h7l-1 8 10-13h-7z"/>
+</svg>:<svg viewBox="0 0 24 24">
+<path d="M4 8a4 4 0 0 1 4-4h8a4 4 0 0 1 0 8H8a4 4 0 0 1-4-4Z"/>
+</svg>}</span>
+<b>{name}</b>
+<small>{detail}</small>
+<em>{unlocked?'Desbloqueado':'Em andamento'}</em>
+</div>)}</div>
+</section>
+<section className="card">
+<h2>Mapa de consistência</h2>
+<p className="supporting-text">Pilares diários registrados.</p>
+<div className="heatmap">{Array.from({length:todayNumber},(_,index)=>{const day=String(index+1).padStart(2,'0'),key=`${month}-${day}`;const points=Number(store.meals.some(meal=>meal.date===key))+Number((store.water[key]??0)>=store.waterReference)+Number(store.creatine[key])+Number(store.trainings.some(training=>training.date===key));return <span key={key} className={`heat heat-${points}`} title={`${key}: ${points} pilares`}>{index+1}</span>})}</div>
+</section>
+</>}
+
+      {page === 'Rotina' && <>
+<div className="page-heading">
+<div>
+<div className="eyebrow">PREFERÊNCIAS LOCAIS</div>
+<h1>Configurações</h1>
+</div>
+</div>
+<section className="card setting-card">
+<h2>Backup completo</h2>
+<p className="supporting-text">Exporte seus registros ou restaure um arquivo JSON.</p>
+<div className="settings-actions">
+<button className="button-primary compact" onClick={exportBackup}>Exportar backup</button>
+<label className="button-quiet import-button">Importar JSON<input type="file" accept="application/json,.json" onChange={event=>importBackup(event.target.files?.[0])}/>
+</label>
+</div>
+</section>
+<section className="card setting-card">
+<h2>Alimentos e combos</h2>
+<p className="supporting-text">{store.combos.length} combos · {store.customFoods.length} alimentos personalizados</p>{store.combos.map(combo=>
+<div className="manage-row" key={combo.id}>
+<span>{combo.name}</span>
+<button className="remove-button" onClick={()=>setStore(current=>({...current,combos:current.combos.filter(item=>item.id!==combo.id)}))}>Excluir</button>
+</div>)}{store.customFoods.map(food=>
+<div className="manage-row" key={food.id}>
+<span>{food.description}</span>
+<button className="remove-button" onClick={()=>setStore(current=>({...current,customFoods:current.customFoods.filter(item=>item.id!==food.id)}))}>Excluir</button>
+</div>)}</section>
+<section className="card setting-card">
+<h2>Medidas caseiras</h2>{Object.entries(store.servings).map(([name,value])=>
+<label className="setting-input-row" key={name}>{name}<input type="number" min="0" max="9999" onKeyDown={blockInvalidChars} value={value} onChange={event=>setStore(current=>({...current,servings:{...current.servings,[name]:sanitizeNumber(event.target.value, 1, 9999)}}))}/> g</label>)}<label className="setting-input-row">Garrafa de água<input type="number" min="0" max="9999" onKeyDown={blockInvalidChars} value={store.bottleMl} onChange={event=>setStore(current=>({...current,bottleMl:sanitizeNumber(event.target.value, 50, 9999)}))}/> ml</label>
+</section>
+<section className="card setting-card">
+<h2>Integrações futuras</h2>
+<label className="field-label" htmlFor="ai-key">Chave de API de IA (opcional)</label>
+<input id="ai-key" type="password" autoComplete="off" placeholder="Não configurada" value={apiKey} onChange={event=>setApiKey(event.target.value)}/>
+<p className="supporting-text">Campo apenas visual nesta versão; nenhuma chave é enviada ou salva.</p>
+</section>
+<section className="card setting-card">
+<h2>Armazenamento local</h2>
+<p className="supporting-text">Seus registros ficam neste navegador.</p>
+<button className="button-quiet" onClick={() => { if (window.confirm('Apagar todos os registros locais?')) { localStorage.removeItem(KEY); setStore(empty); notify('Registros locais apagados.') } }}>Apagar meus dados</button>
+</section>
+<section className="card setting-card">
+<h2>Fonte TACO</h2>
+<p className="supporting-text">Nutrientes por 100 g. Campos indisponíveis não são convertidos em zero.</p>
+<a className="source-link" href="/data/TACO-LICENSE" target="_blank" rel="noreferrer">Ver licença MIT</a>
+</section>
+</>}
     </main>
-    <nav className="bottom-nav" aria-label="Navegação principal">{(['Hoje', 'Comida', 'Treinos', 'Movimento', 'Evolução', 'Avaliação', 'Rotina'] as const).map((item) => <button key={item} className={page === item ? 'active' : ''} onClick={() => {setPage(item);window.scrollTo({top:0,behavior:'instant'})}}><span>{item === 'Hoje' ? '⌂' : item === 'Comida' ? '◉' : item === 'Treinos' ? '▤' : item === 'Movimento' ? '⌁' : item === 'Evolução' ? '▦' : item === 'Avaliação' ? '◍' : '◷'}</span>{item}</button>)}</nav>
-    {bikeDialog && <div className="modal-backdrop" onClick={() => setBikeDialog(false)}><section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="bike-title" onClick={(event) => event.stopPropagation()}><button className="modal-close" onClick={() => setBikeDialog(false)}>×</button><span className="eyebrow">REGISTRAR PEDALADA</span><h2 id="bike-title">Qual foi o trajeto?</h2>{[['Casa ↔ Escola', 3.5], ['Casa ↔ Academia', 6], ['Casa / Tia → Academia', 1.5]].map(([label, km]) => <button className="route-button" key={label} onClick={() => saveBike(Number(km), 0, String(label))}><span>{label}</span><b>{format(Number(km), 1)} km</b></button>)}<div className="custom-route"><label>Trajeto livre</label><div className="route-inputs"><input type="number" min="0.1" step="0.1" placeholder="km" value={customKm} onChange={(event) => setCustomKm(event.target.value)} /><input type="number" min="1" placeholder="min" value={customMinutes} onChange={(event) => setCustomMinutes(event.target.value)} /></div><button className="button-primary" onClick={() => Number(customKm) > 0 && Number(customMinutes) > 0 ? saveBike(Number(customKm), Number(customMinutes), 'Trajeto livre') : notify('Informe km e minutos válidos.')}>Salvar trajeto</button></div></section></div>}
-    {toast && <div className="toast" role="status">{toast}<button aria-label="Fechar" onClick={() => setToast('')}>×</button></div>}
+
+    <nav className="bottom-nav" aria-label="Navegação principal">{(['Hoje', 'Comida', 'Treinos', 'Movimento', 'Evolução', 'Avaliação', 'Rotina'] as const).map((item) => <button key={item} className={page === item ? 'active' : ''} onClick={() => {if(item==='Comida')setSlot(getAutoSlot());setPage(item);window.scrollTo({top:0,behavior:'instant'})}}>
+<span>{item === 'Hoje' ? '⌂' : item === 'Comida' ? '◉' : item === 'Treinos' ? '▤' : item === 'Movimento' ? '⌁' : item === 'Evolução' ? '▦' : item === 'Avaliação' ? '◍' : '◷'}</span>{item}</button>)}</nav>
+
+    {bikeDialog && <div className="modal-backdrop" onClick={() => setBikeDialog(false)}>
+<section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="bike-title" onClick={(event) => event.stopPropagation()}>
+<button className="modal-close" onClick={() => setBikeDialog(false)}>×</button>
+<span className="eyebrow">REGISTRAR PEDALADA</span>
+<h2 id="bike-title">Qual foi o trajeto?</h2>{[['Casa ↔ Escola', 3.5], ['Casa ↔ Academia', 6], ['Casa / Tia → Academia', 1.5]].map(([label, km]) => <button className="route-button" key={label} onClick={() => saveBike(Number(km), 0, String(label))}>
+<span>{label}</span>
+<b>{format(Number(km), 1)} km</b>
+</button>)}<div className="custom-route">
+<label>Trajeto livre</label>
+<div className="route-inputs">
+<input type="number" min="0" max="999" step="0.1" onKeyDown={blockInvalidChars} placeholder="km" value={customKm} onChange={(event) => setCustomKm(event.target.value)} />
+<input type="number" min="0" max="999" onKeyDown={blockInvalidChars} placeholder="min" value={customMinutes} onChange={(event) => setCustomMinutes(event.target.value)} />
+</div>
+<button className="button-primary" onClick={() => sanitizeNumber(customKm, 0, 999) > 0 && sanitizeNumber(customMinutes, 0, 999) > 0 ? saveBike(Number(customKm), Number(customMinutes), 'Trajeto livre') : notify('Informe km e minutos válidos.')}>Salvar trajeto</button>
+</div>
+</section>
+</div>}
+    {toast && <div className="toast" role="status">{toast}<button aria-label="Fechar" onClick={() => setToast('')}>×</button>
+</div>}
     <footer className="app-footer">PRIVADO NESTE DISPOSITIVO · DADOS BASE TACO</footer>
   </div>
 }
