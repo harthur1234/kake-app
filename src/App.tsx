@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ConsistencySection, type DayActivityData } from './components/ConsistencySection'
+import {
+  type CloudConfig,
+  fetchCloudStore,
+  loadCloudConfig,
+  pushCloudStore,
+  saveCloudConfig,
+} from './lib/cloudDb'
 import './App.css'
 
 type Food = { id: number; description: string; category: string; energy_kcal?: number | string; protein_g?: number | string; carbohydrate_g?: number | string; lipid_g?: number | string; source?: 'TACO' | 'Estimativa' | 'Mercado Online'; unitKcal?: number }
@@ -10,7 +17,7 @@ type Activity = { id: string; kind: string; date: string; done: boolean; km?: nu
 type Measure = { id: string; date: string; weight?: number; bodyFat?: number; muscle?: number; hydration?: number; waist?: number; chest?: number; arm?: number }
 type Exercise = { id: string; name: string; sets: Array<{ reps: number; weight: number | null }> }
 type Training = { id: string; date: string; group: 'A' | 'B' | 'C'; exercises: Array<{ exerciseId: string; name: string; sets: Array<{ reps: number; weight: number | null }> }> }
-type Store = { meals: Meal[]; water: Record<string, number>; activities: Activity[]; comparison: number | null; comparisonConfirmed: boolean; waterReference: number; bottleMl: number; servings: Record<string, number>; creatine: Record<string, boolean>; measures: Measure[]; combos: Array<{ id: string; name: string; items: Array<{ foodId: number; grams: number }> }>; customFoods: Food[]; exercises: Record<'A'|'B'|'C', Exercise[]>; trainings: Training[] }
+type Store = { updatedAt?: number; meals: Meal[]; water: Record<string, number>; activities: Activity[]; comparison: number | null; comparisonConfirmed: boolean; waterReference: number; bottleMl: number; servings: Record<string, number>; creatine: Record<string, boolean>; measures: Measure[]; combos: Array<{ id: string; name: string; items: Array<{ foodId: number; grams: number }> }>; customFoods: Food[]; exercises: Record<'A'|'B'|'C', Exercise[]>; trainings: Training[] }
 
 const KEY = 'kake-pessoal-v2'
 const SLOTS: Array<{ name: Slot; time: string }> = [
@@ -22,9 +29,27 @@ const SLOTS: Array<{ name: Slot; time: string }> = [
 ]
 
 const initialExercises = (): Store['exercises'] => ({ A: [], B: [], C: [] })
-const empty: Store = { meals: [], water: {}, activities: [], comparison: null, comparisonConfirmed: false, waterReference: 3500, bottleMl: 500, servings: { 'Colher de Servir': 60, Concha: 90, Escumadeira: 85, 'Colher de Sopa': 25 }, creatine: {}, measures: [], combos: [], customFoods: [], exercises: initialExercises(), trainings: [] }
+const empty: Store = { updatedAt: 0, meals: [], water: {}, activities: [], comparison: null, comparisonConfirmed: false, waterReference: 3500, bottleMl: 500, servings: { 'Colher de Servir': 60, Concha: 90, Escumadeira: 85, 'Colher de Sopa': 25 }, creatine: {}, measures: [], combos: [], customFoods: [], exercises: initialExercises(), trainings: [] }
 const localDate = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-const safeRead = (): Store => { try { const data = JSON.parse(localStorage.getItem(KEY) || 'null'); return data ? { ...empty, ...data, exercises: { ...initialExercises(), ...(data.exercises || {}) }, servings: { ...empty.servings, ...(data.servings || {}) } } : empty } catch { return empty } }
+const normalizeStore = (data: Partial<Store> | null | undefined): Store => {
+  if (!data || typeof data !== 'object') return empty
+  return {
+    ...empty,
+    ...data,
+    updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : 0,
+    meals: Array.isArray(data.meals) ? data.meals : [],
+    activities: Array.isArray(data.activities) ? data.activities : [],
+    measures: Array.isArray(data.measures) ? data.measures : [],
+    combos: Array.isArray(data.combos) ? data.combos : [],
+    customFoods: Array.isArray(data.customFoods) ? data.customFoods : [],
+    trainings: Array.isArray(data.trainings) ? data.trainings : [],
+    exercises: { ...initialExercises(), ...(data.exercises || {}) },
+    servings: { ...empty.servings, ...(data.servings || {}) },
+    water: data.water && typeof data.water === 'object' ? data.water : {},
+    creatine: data.creatine && typeof data.creatine === 'object' ? data.creatine : {},
+  }
+}
+const safeRead = (): Store => { try { const data = JSON.parse(localStorage.getItem(KEY) || 'null'); return normalizeStore(data) } catch { return empty } }
 const numeric = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string' && value.trim() !== '') {
@@ -56,6 +81,19 @@ const getAutoSlot = (date = new Date()): Slot => {
   return 'Jantar Único'
 }
 
+const hasAnyUserData = (s: Store): boolean =>
+  s.meals.length > 0 ||
+  s.activities.length > 0 ||
+  s.trainings.length > 0 ||
+  s.measures.length > 0 ||
+  Object.keys(s.water).length > 0 ||
+  Object.keys(s.creatine).length > 0 ||
+  s.combos.length > 0 ||
+  s.customFoods.length > 0 ||
+  s.exercises.A.length > 0 ||
+  s.exercises.B.length > 0 ||
+  s.exercises.C.length > 0
+
 function App() {
   "use no memo"
   const [store, setStore] = useState<Store>(safeRead)
@@ -67,7 +105,6 @@ function App() {
   const [grams, setGrams] = useState<Record<number, number>>({})
   const [trainingGroup, setTrainingGroup] = useState<'A'|'B'|'C'>('A')
   const [newExercise, setNewExercise] = useState('')
-  const [apiKey, setApiKey] = useState('')
   const [toast, setToast] = useState('')
   const [comparisonInput, setComparisonInput] = useState('')
   const [professionalConfirmed, setProfessionalConfirmed] = useState(false)
@@ -87,8 +124,154 @@ function App() {
   // Exercício selecionado para o gráfico de progressão (Hevy style)
   const [selectedExerciseName, setSelectedExerciseName] = useState('')
 
+  // Banco de Dados na Nuvem (GitHub Private Repo DB)
+  const [cloudCfg, setCloudCfg] = useState<CloudConfig>(() => {
+    const params = new URLSearchParams(window.location.search)
+    const magicKey = params.get('sync_key')?.trim()
+    if (magicKey) {
+      const nextCfg: CloudConfig = {
+        token: magicKey,
+        owner: params.get('sync_owner')?.trim() || 'harthur1234',
+        repo: params.get('sync_repo')?.trim() || 'kake-private-db',
+        path: 'store.json',
+        enabled: true,
+      }
+      saveCloudConfig(nextCfg)
+      return nextCfg
+    }
+    return loadCloudConfig()
+  })
+  const [tokenInput, setTokenInput] = useState(() => cloudCfg.token)
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'error'>('idle')
+  const [syncMessage, setSyncMessage] = useState('')
+  const cloudShaRef = useRef<string | null>(null)
+  const pendingPushRef = useRef(false)
+  const storeRef = useRef<Store>(store)
+
+  const notify = (text: string) => setToast(text)
+
+  // Função central para atualizar o Store local e agendar envio para a nuvem
+  const updateStore = useCallback((updater: (current: Store) => Store) => {
+    pendingPushRef.current = true
+    setStore((current) => {
+      const next = updater(current)
+      return { ...next, updatedAt: Date.now() }
+    })
+  }, [])
+
+  // Sincronização: Baixar dados da nuvem (Pull)
+  const pullFromCloud = useCallback(async (cfg: CloudConfig, silent = false) => {
+    if (!cfg.enabled || !cfg.token) return
+    setSyncStatus('syncing')
+    const result = await fetchCloudStore<Store>(cfg)
+    if (result.error) {
+      setSyncStatus('error')
+      setSyncMessage(result.error)
+      if (!silent) notify(result.error)
+      return
+    }
+    if (result.sha) {
+      cloudShaRef.current = result.sha
+    }
+    const remoteStore = result.store ? normalizeStore(result.store) : null
+    const localCurrent = storeRef.current
+
+    if (remoteStore) {
+      const remoteTime = remoteStore.updatedAt ?? 0
+      const localTime = localCurrent.updatedAt ?? 0
+      const remoteHasData = hasAnyUserData(remoteStore)
+      const localHasData = hasAnyUserData(localCurrent)
+
+      if (remoteHasData && (remoteTime >= localTime || !localHasData)) {
+        pendingPushRef.current = false
+        setStore(remoteStore)
+        setSyncStatus('synced')
+        setSyncMessage(`Sincronizado às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
+        if (!silent) notify('Dados carregados da nuvem com sucesso!')
+      } else if (localHasData && (!remoteHasData || localTime > remoteTime)) {
+        // Local tem dados mais novos que a nuvem: envia para a nuvem
+        const pushRes = await pushCloudStore(cfg, localCurrent, result.sha)
+        if (pushRes.ok) {
+          if (pushRes.sha) cloudShaRef.current = pushRes.sha
+          setSyncStatus('synced')
+          setSyncMessage(`Salvo na nuvem às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
+        } else {
+          setSyncStatus('error')
+          setSyncMessage(pushRes.error || 'Erro ao enviar dados')
+        }
+      } else {
+        setSyncStatus('synced')
+        setSyncMessage(`Nuvem conectada · ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
+      }
+    } else {
+      // Ainda não existe store.json na nuvem, cria com os dados locais
+      const pushRes = await pushCloudStore(cfg, localCurrent, null)
+      if (pushRes.ok) {
+        if (pushRes.sha) cloudShaRef.current = pushRes.sha
+        setSyncStatus('synced')
+        setSyncMessage('Banco inicializado na nuvem!')
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    storeRef.current = store
+  }, [store])
+
+  // Limpa URL se entrou por Link Mágico e faz o primeiro pull da nuvem
+  useEffect(() => {
+    if (window.location.search.includes('sync_key=')) {
+      window.history.replaceState({}, document.title, window.location.pathname)
+    }
+    if (!cloudCfg.enabled || !cloudCfg.token) return
+    const timer = window.setTimeout(() => {
+      void pullFromCloud(cloudCfg, true)
+    }, 50)
+    return () => window.clearTimeout(timer)
+  }, [cloudCfg, pullFromCloud])
+
+  // Atualiza dados quando o usuário volta para a aba ou desbloqueia o celular
+  useEffect(() => {
+    const onFocusOrVisible = () => {
+      if (document.visibilityState === 'visible' && cloudCfg.enabled && cloudCfg.token && !pendingPushRef.current) {
+        pullFromCloud(cloudCfg, true)
+      }
+    }
+    window.addEventListener('focus', onFocusOrVisible)
+    document.addEventListener('visibilitychange', onFocusOrVisible)
+    return () => {
+      window.removeEventListener('focus', onFocusOrVisible)
+      document.removeEventListener('visibilitychange', onFocusOrVisible)
+    }
+  }, [cloudCfg, pullFromCloud])
+
+  // Salva no localStorage sempre e envia automaticamente para a nuvem (debounce de 1s) quando houver alteração
+  useEffect(() => {
+    try {
+      localStorage.setItem(KEY, JSON.stringify(store))
+    } catch {
+      console.error('localStorage unavailable or full')
+    }
+    if (!cloudCfg.enabled || !cloudCfg.token || !pendingPushRef.current) return
+
+    setSyncStatus('syncing')
+    const timer = window.setTimeout(async () => {
+      pendingPushRef.current = false
+      const res = await pushCloudStore(cloudCfg, store, cloudShaRef.current)
+      if (res.ok) {
+        if (res.sha) cloudShaRef.current = res.sha
+        setSyncStatus('synced')
+        setSyncMessage(`Salvo às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
+      } else {
+        setSyncStatus('error')
+        setSyncMessage(res.error || 'Erro ao sincronizar')
+      }
+    }, 900)
+
+    return () => window.clearTimeout(timer)
+  }, [store, cloudCfg])
+
   useEffect(() => { let cancelled=false; fetch('/data/TACO.json').then((r) => { if (!r.ok) throw new Error('TACO indisponível'); return r.json() }).then((data: Food[]) => { if(!cancelled)setFoods(data) }).catch(() => { if(!cancelled)setToast('Não foi possível carregar data/TACO.json.') }); return ()=>{cancelled=true} }, [])
-  useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(store)) } catch { console.error('localStorage unavailable or full') } }, [store])
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(''), 4000); return () => window.clearTimeout(timer) }, [toast])
 
   useEffect(() => {
@@ -105,8 +288,6 @@ function App() {
     }, 1000)
     return () => window.clearInterval(timer)
   }, [restRunning, restSeconds])
-
-  const notify = (text: string) => setToast(text)
 
   const startRestTimer = (seconds: number) => {
     setRestTotal(seconds)
@@ -158,7 +339,7 @@ function App() {
     const kcal = numeric(food.energy_kcal), proteinBase = numeric(food.protein_g), carbs = numeric(food.carbohydrate_g), fat = numeric(food.lipid_g)
     const item: Item = { id: crypto.randomUUID(), foodId: food.id, name: food.description, grams: cleanAmount, source: food.source ?? 'TACO', ...(kcal === null ? {} : { kcal: food.unitKcal ? food.unitKcal * cleanAmount : kcal * cleanAmount / 100 }), ...(proteinBase === null ? {} : { protein: proteinBase * cleanAmount / 100 }), ...(carbs === null ? {} : { carbs: carbs * cleanAmount / 100 }), ...(fat === null ? {} : { fat: fat * cleanAmount / 100 }) }
     const time = SLOTS.find((entry) => entry.name === slot)?.time ?? 'Livre'
-    setStore((current) => {
+    updateStore((current) => {
       const existing = current.meals.find((meal) => meal.date === today && slotMatches(meal, slot))
       return existing ? { ...current, meals: current.meals.map((meal) => meal.id === existing.id ? { ...meal, items: [...meal.items, item] } : meal) } : { ...current, meals: [...current.meals, { id: crypto.randomUUID(), slot, time: time === 'Livre' ? new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : time, date: today, items: [item] }] }
     })
@@ -174,7 +355,7 @@ function App() {
     })
     if (!items.length) { notify('Os alimentos do combo não foram encontrados.'); return }
     const time = SLOTS.find((entry) => entry.name === slot)?.time ?? 'Livre'
-    setStore((current) => { const existing = current.meals.find((meal) => meal.date === today && slotMatches(meal, slot)); return existing ? { ...current, meals: current.meals.map((meal) => meal.id === existing.id ? { ...meal, items: [...meal.items, ...items] } : meal) } : { ...current, meals: [...current.meals, { id: crypto.randomUUID(), slot, time: time === 'Livre' ? new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : time, date: today, items }] } })
+    updateStore((current) => { const existing = current.meals.find((meal) => meal.date === today && slotMatches(meal, slot)); return existing ? { ...current, meals: current.meals.map((meal) => meal.id === existing.id ? { ...meal, items: [...meal.items, ...items] } : meal) } : { ...current, meals: [...current.meals, { id: crypto.randomUUID(), slot, time: time === 'Livre' ? new Date().toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : time, date: today, items }] } })
     notify(`Combo “${combo.name}” adicionado em ${slot}!`)
   }
 
@@ -184,15 +365,15 @@ function App() {
     if (selected.length < 1) { notify('Adicione pelo menos um item à refeição antes de salvar o combo.'); return }
     const name = window.prompt('Nome do combo')?.trim()
     if (!name) return
-    setStore((current) => ({ ...current, combos: [...current.combos, { id: crypto.randomUUID(), name, items: selected.map((item) => ({ foodId: item.foodId, grams: item.grams })) }] }))
-    notify('Combo salvo neste dispositivo.')
+    updateStore((current) => ({ ...current, combos: [...current.combos, { id: crypto.randomUUID(), name, items: selected.map((item) => ({ foodId: item.foodId, grams: item.grams })) }] }))
+    notify('Combo salvo e sincronizado.')
   }
 
   function saveComparison() {
     const value = sanitizeNumber(comparisonInput, 0, 99999)
     if (!professionalConfirmed || value <= 0) { notify('Confirme um valor recomendado por profissional para ativar a comparação.'); return }
-    setStore((current) => ({ ...current, comparison: value, comparisonConfirmed: true }))
-    notify('Parâmetro salvo localmente.')
+    updateStore((current) => ({ ...current, comparison: value, comparisonConfirmed: true }))
+    notify('Parâmetro salvo.')
   }
 
   function streak(predicate: (key: string) => boolean) {
@@ -298,33 +479,33 @@ function App() {
   function saveBike(km: number, minutes: number, label: string) {
     const cleanKm = sanitizeNumber(km, 0, 999)
     const cleanMin = sanitizeNumber(minutes, 0, 999)
-    setStore((current) => ({ ...current, activities: [...current.activities, { id: crypto.randomUUID(), kind: 'Bike', date: today, done: true, km: cleanKm, minutes: cleanMin, label }] }))
+    updateStore((current) => ({ ...current, activities: [...current.activities, { id: crypto.randomUUID(), kind: 'Bike', date: today, done: true, km: cleanKm, minutes: cleanMin, label }] }))
     setBikeDialog(false); setCustomKm(''); setCustomMinutes(''); notify(`Pedalada registrada · ${format(cleanKm, 1)} km`)
   }
 
   function addActivity(kind: string) {
-    setStore((current) => ({ ...current, activities: [...current.activities, { id: crypto.randomUUID(), kind, date: today, done: true }] }))
+    updateStore((current) => ({ ...current, activities: [...current.activities, { id: crypto.randomUUID(), kind, date: today, done: true }] }))
     notify(`${kind} registrado.`)
   }
 
   function removeMealItem(mealId: string, itemId: string) {
-    setStore((current) => ({ ...current, meals: current.meals.map((meal) => meal.id === mealId ? { ...meal, items: meal.items.filter((item) => item.id !== itemId) } : meal).filter((meal) => meal.items.length) }))
+    updateStore((current) => ({ ...current, meals: current.meals.map((meal) => meal.id === mealId ? { ...meal, items: meal.items.filter((item) => item.id !== itemId) } : meal).filter((meal) => meal.items.length) }))
   }
 
   function addExercise() {
     const name = newExercise.trim(); if (!name) return
-    setStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: [...current.exercises[trainingGroup], { id: crypto.randomUUID(), name, sets: [{ reps: 12, weight: null }, { reps: 10, weight: null }, { reps: 8, weight: null }] }] } }))
+    updateStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: [...current.exercises[trainingGroup], { id: crypto.randomUUID(), name, sets: [{ reps: 12, weight: null }, { reps: 10, weight: null }, { reps: 8, weight: null }] }] } }))
     setNewExercise(''); notify(`Exercício adicionado à ficha ${trainingGroup}.`)
   }
 
-  function removeExercise(id: string) { setStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].filter((exercise) => exercise.id !== id) } })) }
+  function removeExercise(id: string) { updateStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].filter((exercise) => exercise.id !== id) } })) }
   function updateSet(exerciseId: string, setIndex: number, field: 'reps'|'weight', value: number | null) {
-    setStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].map((exercise) => exercise.id === exerciseId ? { ...exercise, sets: exercise.sets.map((set, index) => index === setIndex ? { ...set, [field]: value } : set) } : exercise) } }))
+    updateStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].map((exercise) => exercise.id === exerciseId ? { ...exercise, sets: exercise.sets.map((set, index) => index === setIndex ? { ...set, [field]: value } : set) } : exercise) } }))
   }
-  function addSet(exerciseId: string) { setStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].map((exercise) => exercise.id === exerciseId ? { ...exercise, sets: [...exercise.sets, { reps: 8, weight: null }] } : exercise) } })) }
+  function addSet(exerciseId: string) { updateStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].map((exercise) => exercise.id === exerciseId ? { ...exercise, sets: [...exercise.sets, { reps: 8, weight: null }] } : exercise) } })) }
 
   function finishWorkout() {
-    setStore((current) => ({ ...current, trainings: [...current.trainings, { id: crypto.randomUUID(), date: today, group: trainingGroup, exercises: current.exercises[trainingGroup].map((exercise) => ({ exerciseId: exercise.id, name: exercise.name, sets: exercise.sets })) }], activities: [...current.activities, { id: crypto.randomUUID(), kind: 'Academia', date: today, done: true }] }))
+    updateStore((current) => ({ ...current, trainings: [...current.trainings, { id: crypto.randomUUID(), date: today, group: trainingGroup, exercises: current.exercises[trainingGroup].map((exercise) => ({ exerciseId: exercise.id, name: exercise.name, sets: exercise.sets })) }], activities: [...current.activities, { id: crypto.randomUUID(), kind: 'Academia', date: today, done: true }] }))
     notify(`Treino ${trainingGroup} salvo com sucesso!`)
   }
 
@@ -335,14 +516,14 @@ function App() {
     const carbs = sanitizeNumber(window.prompt('Carboidratos em g por 100 g (opcional)') || 0, 0, 9999)
     const fat = sanitizeNumber(window.prompt('Gorduras em g por 100 g (opcional)') || 0, 0, 9999)
     const food: Food = { id: -Date.now(), description: name, category: 'Personalizado · valor informado', energy_kcal: kcal, protein_g: proteinValue, carbohydrate_g: carbs, lipid_g: fat, source: 'Estimativa' }
-    setStore((current) => ({ ...current, customFoods: [...current.customFoods, food] })); setSearch(name); notify('Alimento personalizado salvo.')
+    updateStore((current) => ({ ...current, customFoods: [...current.customFoods, food] })); setSearch(name); notify('Alimento personalizado salvo.')
   }
 
   function exportBackup() {
     const blob = new Blob([JSON.stringify(store, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `kake-backup-${today}.json`; a.click(); URL.revokeObjectURL(url); notify('Backup exportado.')
   }
   function importBackup(file?: File) {
-    if (!file) return; const reader = new FileReader(); reader.onload = () => { try { const parsed = JSON.parse(String(reader.result)); if (!parsed || !Array.isArray(parsed.meals)) throw new Error('invalid'); setStore({ ...empty, ...parsed, exercises: { ...initialExercises(), ...parsed.exercises } }); notify('Backup importado.') } catch { notify('Arquivo de backup inválido.') } }; reader.readAsText(file)
+    if (!file) return; const reader = new FileReader(); reader.onload = () => { try { const parsed = JSON.parse(String(reader.result)); if (!parsed || !Array.isArray(parsed.meals)) throw new Error('invalid'); updateStore(() => normalizeStore(parsed)); notify('Backup importado e sincronizando.') } catch { notify('Arquivo de backup inválido.') } }; reader.readAsText(file)
   }
 
   async function searchOpenFoodFacts() {
@@ -387,8 +568,38 @@ function App() {
   function addWater(amount: number) {
     const safeAmount = sanitizeNumber(amount, 0, 5000)
     if (!safeAmount) return
-    setStore((current) => ({ ...current, water: { ...current.water, [today]: Math.min(12000, (current.water[today] ?? 0) + safeAmount) } }))
+    updateStore((current) => ({ ...current, water: { ...current.water, [today]: Math.min(12000, (current.water[today] ?? 0) + safeAmount) } }))
     notify(`+${safeAmount} ml de água registrados.`)
+  }
+
+  async function handleConnectCloud(e: React.FormEvent) {
+    e.preventDefault()
+    const cleanToken = tokenInput.trim()
+    if (!cleanToken) {
+      notify('Cole sua Chave de Sincronização (Token) primeiro.')
+      return
+    }
+    const nextCfg: CloudConfig = {
+      ...cloudCfg,
+      token: cleanToken,
+      enabled: true,
+    }
+    saveCloudConfig(nextCfg)
+    setCloudCfg(nextCfg)
+    await pullFromCloud(nextCfg, false)
+  }
+
+  function copyMagicSyncLink() {
+    if (!cloudCfg.token) {
+      notify('Conecte a chave primeiro antes de gerar o link.')
+      return
+    }
+    const origin = window.location.origin
+    const link = `${origin}/?sync_key=${encodeURIComponent(cloudCfg.token)}`
+    navigator.clipboard.writeText(link).then(
+      () => notify('Link mágico copiado! Envie para o seu celular (WhatsApp) e abra para conectar automático.'),
+      () => notify('Não foi possível copiar automaticamente.')
+    )
   }
 
   return <div className="app-shell">
@@ -398,7 +609,32 @@ function App() {
         <span className="brand-name">KAKE</span>
         <span className="brand-caption">SEU DIÁRIO PESSOAL</span>
       </div>
-      <button className={`icon-button ${page === 'Configurações' ? 'active-gear' : ''}`} aria-label="Configurações" title="Configurações" onClick={() => setPage('Configurações')}>⚙</button>
+      <div className="topbar-right">
+        <button
+          type="button"
+          className={`cloud-status-pill ${cloudCfg.enabled ? `cloud-${syncStatus}` : 'cloud-disconnected'}`}
+          onClick={() => {
+            if (cloudCfg.enabled && page !== 'Configurações') {
+              pullFromCloud(cloudCfg, false)
+            } else {
+              setPage('Configurações')
+            }
+          }}
+          title={syncMessage || 'Configurar Banco de Dados na Nuvem'}
+        >
+          <span className="cloud-dot" />
+          <span>
+            {!cloudCfg.enabled
+              ? 'Conectar Nuvem'
+              : syncStatus === 'syncing'
+              ? 'Sincronizando…'
+              : syncStatus === 'error'
+              ? 'Erro Nuvem'
+              : 'Nuvem Ativa'}
+          </span>
+        </button>
+        <button className={`icon-button ${page === 'Configurações' ? 'active-gear' : ''}`} aria-label="Configurações" title="Configurações" onClick={() => setPage('Configurações')}>⚙</button>
+      </div>
     </header>
 
     <main className="main-content">
@@ -410,6 +646,15 @@ function App() {
           </div>
           <span className="live-dot">● HOJE</span>
         </div>
+
+        {!cloudCfg.enabled && (
+          <section className="cloud-banner" onClick={() => setPage('Configurações')}>
+            <div>
+              <span className="eyebrow">SINCRONIZAÇÃO PC & CELULAR</span>
+              <b>Ative o Banco de Dados na Nuvem nas Configurações →</b>
+            </div>
+          </section>
+        )}
 
         <section className="status-card">
           <span className="status-mark">◷</span>
@@ -483,7 +728,7 @@ function App() {
               </label>
               <div className="form-actions">
                 <button className="button-primary compact" onClick={saveComparison}>Salvar</button>
-                {comparison !== null && <button className="button-quiet" onClick={() => { setStore((current) => ({ ...current, comparison: null, comparisonConfirmed: false })); setComparisonInput('') }}>Remover</button>}
+                {comparison !== null && <button className="button-quiet" onClick={() => { updateStore((current) => ({ ...current, comparison: null, comparisonConfirmed: false })); setComparisonInput('') }}>Remover</button>}
               </div>
             </div>
           </details>
@@ -503,7 +748,7 @@ function App() {
                 aria-pressed={Boolean(store.creatine[today])}
                 onClick={() => {
                   const next = !store.creatine[today]
-                  setStore((current) => ({ ...current, creatine: { ...current.creatine, [today]: next } }))
+                  updateStore((current) => ({ ...current, creatine: { ...current.creatine, [today]: next } }))
                   notify(next ? 'Creatina 5g marcada hoje!' : 'Creatina desmarcada.')
                 }}
               >
@@ -530,7 +775,7 @@ function App() {
               disabled={water === 0}
               title="Diminuir 250 ml caso tenha clicado por engano"
               onClick={() => {
-                setStore((current) => ({ ...current, water: { ...current.water, [today]: Math.max(0, (current.water[today] ?? 0) - 250) } }))
+                updateStore((current) => ({ ...current, water: { ...current.water, [today]: Math.max(0, (current.water[today] ?? 0) - 250) } }))
                 notify('−250 ml corrigido.')
               }}
             >
@@ -676,7 +921,7 @@ function App() {
                     <small>{combo.items.length} itens · adicionar direto em {slot}</small>
                   </span>
                 </button>
-                <button className="remove-button" aria-label={`Excluir combo ${combo.name}`} onClick={() => setStore(current => ({ ...current, combos: current.combos.filter(x => x.id !== combo.id) }))}>×</button>
+                <button className="remove-button" aria-label={`Excluir combo ${combo.name}`} onClick={() => updateStore(current => ({ ...current, combos: current.combos.filter(x => x.id !== combo.id) }))}>×</button>
               </div>
             ))}
           </div>
@@ -878,7 +1123,7 @@ function App() {
             <h1>Avaliação física</h1>
           </div>
         </div>
-        <form className="card assessment-form" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const next: Measure = { id: crypto.randomUUID(), date: String(form.get('date')), weight: sanitizeNumber(String(form.get('weight')), 0, 999) || undefined, bodyFat: sanitizeNumber(String(form.get('bodyFat')), 0, 100) || undefined, muscle: sanitizeNumber(String(form.get('muscle')), 0, 999) || undefined, hydration: sanitizeNumber(String(form.get('hydration')), 0, 100) || undefined, waist: sanitizeNumber(String(form.get('waist')), 0, 999) || undefined, chest: sanitizeNumber(String(form.get('chest')), 0, 999) || undefined, arm: sanitizeNumber(String(form.get('arm')), 0, 999) || undefined }; setStore((current) => ({ ...current, measures: [...current.measures, next].sort((a, b) => a.date.localeCompare(b.date)) })); notify('Avaliação salva localmente.'); event.currentTarget.reset() }}>
+        <form className="card assessment-form" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const next: Measure = { id: crypto.randomUUID(), date: String(form.get('date')), weight: sanitizeNumber(String(form.get('weight')), 0, 999) || undefined, bodyFat: sanitizeNumber(String(form.get('bodyFat')), 0, 100) || undefined, muscle: sanitizeNumber(String(form.get('muscle')), 0, 999) || undefined, hydration: sanitizeNumber(String(form.get('hydration')), 0, 100) || undefined, waist: sanitizeNumber(String(form.get('waist')), 0, 999) || undefined, chest: sanitizeNumber(String(form.get('chest')), 0, 999) || undefined, arm: sanitizeNumber(String(form.get('arm')), 0, 999) || undefined }; updateStore((current) => ({ ...current, measures: [...current.measures, next].sort((a, b) => a.date.localeCompare(b.date)) })); notify('Avaliação salva.'); event.currentTarget.reset() }}>
           <label>Data do exame<input type="date" name="date" required defaultValue={today} /></label>
           {([['weight', 'Peso corporal (kg)'], ['bodyFat', 'Gordura corporal (%)'], ['muscle', 'Massa muscular / massa magra (kg)'], ['hydration', 'Hidratação (%)'], ['waist', 'Cintura (cm)'], ['chest', 'Tórax / peitoral (cm)'], ['arm', 'Braço / bíceps (cm)']] as const).map(([key, label]) => (
             <label key={key}>{label}<input type="number" min="0" max="999" step="0.1" name={key} onKeyDown={blockInvalidChars} /></label>
@@ -1115,7 +1360,7 @@ function App() {
             title: 'Noite (19:00 — 23:00)',
             checks: [
               ['Jantar registrado', meals.some(m => slotMatches(m, 'Jantar Único'))],
-              ['Creatina 5g tomada', Boolean(store.creatine[today])],
+              ['Creatina 5g marcada', Boolean(store.creatine[today])],
               ['Meta total de hidratação batida', water >= store.waterReference],
             ],
           },
@@ -1137,14 +1382,95 @@ function App() {
       {page === 'Configurações' && <>
         <div className="page-heading">
           <div>
-            <div className="eyebrow">PREFERÊNCIAS DO APLICATIVO</div>
+            <div className="eyebrow">PREFERÊNCIAS & NUVEM</div>
             <h1>Configurações</h1>
           </div>
           <button className="button-quiet compact" onClick={() => setPage('Hoje')}>Voltar</button>
         </div>
+
+        {/* BANCO DE DADOS NA NUVEM (PC & CELULAR) */}
+        <section className="card cloud-db-card">
+          <div className="card-heading">
+            <div>
+              <span className="eyebrow">SINCRONIZAÇÃO EM TEMPO REAL · PC & CELULAR</span>
+              <h2>Banco de Dados na Nuvem</h2>
+            </div>
+            <span className={`cloud-badge ${cloudCfg.enabled ? 'cloud-badge-on' : ''}`}>
+              {cloudCfg.enabled ? 'ATIVO' : 'OFFLINE'}
+            </span>
+          </div>
+          <p className="supporting-text">
+            Seus dados são salvos de forma criptografada/privada no seu repositório exclusivo <b>{cloudCfg.owner}/{cloudCfg.repo}</b>. Nenhuma chave fica exposta no código público.
+          </p>
+
+          <form className="cloud-form" onSubmit={handleConnectCloud}>
+            <label className="field-label" htmlFor="cloud-token">Chave de Sincronização Pessoal (GitHub Token)</label>
+            <div className="cloud-input-row">
+              <input
+                id="cloud-token"
+                type="password"
+                autoComplete="off"
+                placeholder="Cole seu token ghp_..."
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+              />
+              <button type="submit" className="button-primary compact">
+                {cloudCfg.enabled ? 'Atualizar / Sincronizar' : 'Conectar Banco'}
+              </button>
+            </div>
+          </form>
+
+          {syncMessage && <p className="cloud-sync-feedback">{syncMessage}</p>}
+
+          {cloudCfg.enabled && (
+            <div className="cloud-actions-grid">
+              <button type="button" className="button-quiet" onClick={() => pullFromCloud(cloudCfg, false)}>
+                ↻ Baixar da Nuvem agora
+              </button>
+              <button
+                type="button"
+                className="button-quiet"
+                onClick={async () => {
+                  setSyncStatus('syncing')
+                  const res = await pushCloudStore(cloudCfg, store, cloudShaRef.current)
+                  if (res.ok) {
+                    if (res.sha) cloudShaRef.current = res.sha
+                    setSyncStatus('synced')
+                    setSyncMessage(`Enviado às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
+                    notify('Dados deste aparelho enviados para a nuvem!')
+                  } else {
+                    setSyncStatus('error')
+                    notify(res.error || 'Erro ao enviar')
+                  }
+                }}
+              >
+                ↑ Enviar este aparelho p/ Nuvem
+              </button>
+              <button type="button" className="button-primary compact full-col" onClick={copyMagicSyncLink}>
+                🔗 Copiar Link Mágico para Conectar Celular / PC em 1 Clique
+              </button>
+              <button
+                type="button"
+                className="button-quiet full-col"
+                onClick={() => {
+                  const next = { ...cloudCfg, token: '', enabled: false }
+                  saveCloudConfig(next)
+                  setCloudCfg(next)
+                  setTokenInput('')
+                  setSyncStatus('idle')
+                  setSyncMessage('')
+                  notify('Nuvem desconectada neste aparelho.')
+                }}
+              >
+                Desconectar nuvem neste aparelho
+              </button>
+            </div>
+          )}
+        </section>
+
         <section className="card setting-card">
-          <h2>Backup completo</h2>
-          <p className="supporting-text">Exporte seus registros ou restaure um arquivo JSON salvo anteriormente.</p>
+          <h2>Backup em arquivo (JSON)</h2>
+          <p className="supporting-text">Exporte uma cópia manual ou restaure um arquivo JSON salvo anteriormente.</p>
           <div className="settings-actions">
             <button className="button-primary compact" onClick={exportBackup}>Exportar backup</button>
             <label className="button-quiet import-button">
@@ -1159,13 +1485,13 @@ function App() {
           {store.combos.map(combo => (
             <div className="manage-row" key={combo.id}>
               <span>{combo.name}</span>
-              <button className="remove-button" onClick={() => setStore(current => ({ ...current, combos: current.combos.filter(item => item.id !== combo.id) }))}>Excluir</button>
+              <button className="remove-button" onClick={() => updateStore(current => ({ ...current, combos: current.combos.filter(item => item.id !== combo.id) }))}>Excluir</button>
             </div>
           ))}
           {store.customFoods.map(food => (
             <div className="manage-row" key={food.id}>
               <span>{food.description}</span>
-              <button className="remove-button" onClick={() => setStore(current => ({ ...current, customFoods: current.customFoods.filter(item => item.id !== food.id) }))}>Excluir</button>
+              <button className="remove-button" onClick={() => updateStore(current => ({ ...current, customFoods: current.customFoods.filter(item => item.id !== food.id) }))}>Excluir</button>
             </div>
           ))}
         </section>
@@ -1174,28 +1500,22 @@ function App() {
           {Object.entries(store.servings).map(([name, value]) => (
             <label className="setting-input-row" key={name}>
               {name}
-              <input type="number" min="0" max="9999" onKeyDown={blockInvalidChars} value={value} onChange={event => setStore(current => ({ ...current, servings: { ...current.servings, [name]: sanitizeNumber(event.target.value, 1, 9999) } }))} /> g
+              <input type="number" min="0" max="9999" onKeyDown={blockInvalidChars} value={value} onChange={event => updateStore(current => ({ ...current, servings: { ...current.servings, [name]: sanitizeNumber(event.target.value, 1, 9999) } }))} /> g
             </label>
           ))}
           <label className="setting-input-row">
             Meta diária de água (ml)
-            <input type="number" min="500" max="10000" step="100" onKeyDown={blockInvalidChars} value={store.waterReference} onChange={event => setStore(current => ({ ...current, waterReference: sanitizeNumber(event.target.value, 500, 10000) }))} /> ml
+            <input type="number" min="500" max="10000" step="100" onKeyDown={blockInvalidChars} value={store.waterReference} onChange={event => updateStore(current => ({ ...current, waterReference: sanitizeNumber(event.target.value, 500, 10000) }))} /> ml
           </label>
           <label className="setting-input-row">
             Tamanho da garrafa (ml)
-            <input type="number" min="50" max="5000" onKeyDown={blockInvalidChars} value={store.bottleMl} onChange={event => setStore(current => ({ ...current, bottleMl: sanitizeNumber(event.target.value, 50, 5000) }))} /> ml
+            <input type="number" min="50" max="5000" onKeyDown={blockInvalidChars} value={store.bottleMl} onChange={event => updateStore(current => ({ ...current, bottleMl: sanitizeNumber(event.target.value, 50, 5000) }))} /> ml
           </label>
         </section>
         <section className="card setting-card">
-          <h2>Integrações futuras</h2>
-          <label className="field-label" htmlFor="ai-key">Chave de API de IA (opcional)</label>
-          <input id="ai-key" type="password" autoComplete="off" placeholder="Não configurada" value={apiKey} onChange={event => setApiKey(event.target.value)} />
-          <p className="supporting-text">Campo apenas visual nesta versão; nenhuma chave é enviada ou salva.</p>
-        </section>
-        <section className="card setting-card">
           <h2>Armazenamento local</h2>
-          <p className="supporting-text">Seus registros ficam privados neste navegador.</p>
-          <button className="button-quiet" onClick={() => { if (window.confirm('Apagar todos os registros locais?')) { localStorage.removeItem(KEY); setStore(empty); notify('Registros locais apagados.') } }}>Apagar meus dados</button>
+          <p className="supporting-text">Limpar os dados apenas deste navegador.</p>
+          <button className="button-quiet" onClick={() => { if (window.confirm('Apagar todos os registros locais deste navegador?')) { localStorage.removeItem(KEY); setStore(empty); notify('Registros locais apagados.') } }}>Apagar meus dados locais</button>
         </section>
         <section className="card setting-card">
           <h2>Fontes de Dados</h2>
@@ -1252,7 +1572,7 @@ function App() {
         <button aria-label="Fechar" onClick={() => setToast('')}>×</button>
       </div>
     )}
-    <footer className="app-footer">PRIVADO NESTE DISPOSITIVO · TACO & OPEN FOOD FACTS BR</footer>
+    <footer className="app-footer">PRIVADO NESTE DISPOSITIVO & NUVEM PESSOAL · TACO & OPEN FOOD FACTS BR</footer>
   </div>
 }
 

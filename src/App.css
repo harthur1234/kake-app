@@ -753,3 +753,140 @@
   color: #34d399;
   border: 1px solid #1f513f;
 }
+
+
+/* ==========================================
+   CLOUD DATABASE SYNC UI (PC & MOBILE)
+   ========================================== */
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.topbar-right .icon-button {
+  margin-left: 0;
+}
+.cloud-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 650;
+  border: 1px solid #263649;
+  background: #121a26;
+  color: #9cb2cc;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.cloud-status-pill:hover {
+  border-color: #3b82f6;
+}
+.cloud-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #64748b;
+}
+.cloud-synced {
+  border-color: #1f513f;
+  background: #10241d;
+  color: #6ee7b7;
+}
+.cloud-synced .cloud-dot {
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+}
+.cloud-syncing {
+  border-color: #2b4f82;
+  background: #13233b;
+  color: #93c5fd;
+}
+.cloud-syncing .cloud-dot {
+  background: #3b82f6;
+}
+.cloud-error {
+  border-color: #5c242b;
+  background: #281317;
+  color: #fca5a5;
+}
+.cloud-error .cloud-dot {
+  background: #ef4444;
+}
+
+.cloud-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 14px;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  border: 1px dashed #2e5082;
+  background: linear-gradient(145deg, #132238, #0f1826);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.cloud-banner:hover {
+  border-color: #60a5fa;
+}
+.cloud-banner b {
+  display: block;
+  font-size: 12px;
+  color: #dbeafe;
+  margin-top: 3px;
+}
+
+.cloud-db-card {
+  border-color: #29466e;
+  background: linear-gradient(145deg, #132033, #0f1723);
+}
+.cloud-badge {
+  font-size: 9px;
+  font-weight: 750;
+  padding: 3px 9px;
+  border-radius: 12px;
+  background: #1a2433;
+  color: #8fa1b8;
+  border: 1px solid #2b3a4f;
+}
+.cloud-badge-on {
+  background: #122d24;
+  color: #34d399;
+  border-color: #1f513f;
+}
+.cloud-form {
+  margin-top: 12px;
+}
+.cloud-input-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.cloud-input-row input {
+  flex: 1;
+  min-width: 0;
+  background: #0c121b;
+  border: 1px solid #2c3e55;
+  border-radius: 10px;
+  padding: 9px 11px;
+  color: #edf3fb;
+  font-size: 12px;
+}
+.cloud-sync-feedback {
+  font-size: 10px;
+  color: #8ab9fa;
+  margin: 8px 2px 0;
+}
+.cloud-actions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #233349;
+}
+.cloud-actions-grid .full-col {
+  grid-column: 1 / -1;
+}
