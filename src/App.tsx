@@ -8,8 +8,11 @@ import {
   saveCloudConfig,
 } from './lib/cloudDb'
 import {
+  type AIGymMachineGuide,
   type DailyCoachResponse,
+  analyzeGymMachineWithGemini,
   buildMealComboWithGemini,
+  compressImageFileToBase64,
   generateDailyCoachInsight,
   loadCachedCoachInsight,
   loadGeminiKey,
@@ -113,7 +116,7 @@ function App() {
   const [page, setPage] = useState<'Hoje' | 'Comida' | 'Movimento' | 'Treinos' | 'Evolução' | 'Avaliação' | 'Rotina' | 'Configurações'>('Hoje')
   const [slot, setSlot] = useState<Slot>(getAutoSlot)
   const [search, setSearch] = useState('')
-  const [grams, setGrams] = useState<Record<number, number>>({})
+  const [grams, setGrams] = useState<Record<number, number | ''>>({})
   const [trainingGroup, setTrainingGroup] = useState<'A'|'B'|'C'>('A')
   const [newExercise, setNewExercise] = useState('')
   const [toast, setToast] = useState('')
@@ -153,6 +156,12 @@ function App() {
   const [comboPrompt, setComboPrompt] = useState('')
   const [comboAiLoading, setComboAiLoading] = useState(false)
 
+  // Assistente de Máquinas e Execução nos Treinos (Câmera + IA + Vídeo)
+  const [machineQuery, setMachineQuery] = useState('')
+  const [machinePhotoPreview, setMachinePhotoPreview] = useState('')
+  const [machineLoading, setMachineLoading] = useState(false)
+  const [machineGuide, setMachineGuide] = useState<AIGymMachineGuide | null>(null)
+
   // Banco de Dados na Nuvem (GitHub Private Repo DB)
   const [cloudCfg, setCloudCfg] = useState<CloudConfig>(() => {
     const params = new URLSearchParams(window.location.search)
@@ -175,6 +184,7 @@ function App() {
   const [syncMessage, setSyncMessage] = useState('')
   const cloudShaRef = useRef<string | null>(null)
   const pendingPushRef = useRef(false)
+  const isPushingRef = useRef(false)
   const storeRef = useRef<Store>(store)
 
   const notify = (text: string) => setToast(text)
@@ -274,7 +284,7 @@ function App() {
     }
   }, [cloudCfg, pullFromCloud])
 
-  // Salva no localStorage sempre e envia automaticamente para a nuvem (debounce de 1s) quando houver alteração
+  // Salva no localStorage sempre e envia automaticamente para a nuvem (debounce de 900ms + mutex anti-colisão)
   useEffect(() => {
     try {
       localStorage.setItem(KEY, JSON.stringify(store))
@@ -285,15 +295,21 @@ function App() {
 
     setSyncStatus('syncing')
     const timer = window.setTimeout(async () => {
+      if (isPushingRef.current) return
+      isPushingRef.current = true
       pendingPushRef.current = false
-      const res = await pushCloudStore(cloudCfg, store, cloudShaRef.current)
-      if (res.ok) {
-        if (res.sha) cloudShaRef.current = res.sha
-        setSyncStatus('synced')
-        setSyncMessage(`Salvo às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
-      } else {
-        setSyncStatus('error')
-        setSyncMessage(res.error || 'Erro ao sincronizar')
+      try {
+        const res = await pushCloudStore(cloudCfg, storeRef.current, cloudShaRef.current)
+        if (res.ok) {
+          if (res.sha) cloudShaRef.current = res.sha
+          setSyncStatus('synced')
+          setSyncMessage(`Salvo às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
+        } else {
+          setSyncStatus('error')
+          setSyncMessage(res.error || 'Erro ao sincronizar')
+        }
+      } finally {
+        isPushingRef.current = false
       }
     }, 900)
 
@@ -363,7 +379,9 @@ function App() {
   }, [allFoods, query])
 
   function addFoodDirect(food: Food, amount?: number) {
-    const cleanAmount = sanitizeNumber(amount ?? grams[food.id] ?? (food.unitKcal ? 1 : 100), 0, 9999)
+    const rawGram = grams[food.id]
+    const fallbackAmount = rawGram === '' || rawGram === undefined ? (food.unitKcal ? 1 : 100) : rawGram
+    const cleanAmount = sanitizeNumber(amount ?? fallbackAmount, 0, 9999)
     if (cleanAmount <= 0) { notify('Informe gramas maiores que zero.'); return }
     const kcal = numeric(food.energy_kcal), proteinBase = numeric(food.protein_g), carbs = numeric(food.carbohydrate_g), fat = numeric(food.lipid_g)
     const item: Item = { id: crypto.randomUUID(), foodId: food.id, name: food.description, grams: cleanAmount, source: food.source ?? 'TACO', ...(kcal === null ? {} : { kcal: food.unitKcal ? food.unitKcal * cleanAmount : kcal * cleanAmount / 100 }), ...(proteinBase === null ? {} : { protein: proteinBase * cleanAmount / 100 }), ...(carbs === null ? {} : { carbs: carbs * cleanAmount / 100 }), ...(fat === null ? {} : { fat: fat * cleanAmount / 100 }) }
@@ -506,13 +524,21 @@ function App() {
   }, [store.meals, today])
 
   function saveBike(km: number, minutes: number, label: string) {
-    const cleanKm = sanitizeNumber(km, 0, 999)
+    const cleanKm = sanitizeNumber(km, 0, 500)
     const cleanMin = sanitizeNumber(minutes, 0, 999)
+    if (cleanKm <= 0) {
+      notify('Informe uma distância em km maior que zero.')
+      return
+    }
     updateStore((current) => ({ ...current, activities: [...current.activities, { id: crypto.randomUUID(), kind: 'Bike', date: today, done: true, km: cleanKm, minutes: cleanMin, label }] }))
     setBikeDialog(false); setCustomKm(''); setCustomMinutes(''); notify(`Pedalada registrada · ${format(cleanKm, 1)} km`)
   }
 
   function addActivity(kind: string) {
+    if (kind === 'Academia' && activities.some((a) => a.kind === 'Academia' && a.done)) {
+      notify('Treino na Academia já está registrado hoje!')
+      return
+    }
     updateStore((current) => ({ ...current, activities: [...current.activities, { id: crypto.randomUUID(), kind, date: today, done: true }] }))
     notify(`${kind} registrado.`)
   }
@@ -522,7 +548,15 @@ function App() {
   }
 
   function addExercise() {
-    const name = newExercise.trim(); if (!name) return
+    const name = newExercise.trim()
+    if (!name) {
+      notify('Digite o nome do exercício para adicionar na ficha.')
+      return
+    }
+    if (store.exercises[trainingGroup].some((e) => norm(e.name) === norm(name))) {
+      notify(`"${name}" já está na ficha ${trainingGroup}.`)
+      return
+    }
     updateStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: [...current.exercises[trainingGroup], { id: crypto.randomUUID(), name, sets: [{ reps: 12, weight: null }, { reps: 10, weight: null }, { reps: 8, weight: null }] }] } }))
     setNewExercise(''); notify(`Exercício adicionado à ficha ${trainingGroup}.`)
   }
@@ -531,11 +565,63 @@ function App() {
   function updateSet(exerciseId: string, setIndex: number, field: 'reps'|'weight', value: number | null) {
     updateStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].map((exercise) => exercise.id === exerciseId ? { ...exercise, sets: exercise.sets.map((set, index) => index === setIndex ? { ...set, [field]: value } : set) } : exercise) } }))
   }
-  function addSet(exerciseId: string) { updateStore((current) => ({ ...current, exercises: { ...current.exercises, [trainingGroup]: current.exercises[trainingGroup].map((exercise) => exercise.id === exerciseId ? { ...exercise, sets: [...exercise.sets, { reps: 8, weight: null }] } : exercise) } })) }
+  function addSet(exerciseId: string) {
+    updateStore((current) => ({
+      ...current,
+      exercises: {
+        ...current.exercises,
+        [trainingGroup]: current.exercises[trainingGroup].map((exercise) =>
+          exercise.id === exerciseId && exercise.sets.length < 15
+            ? { ...exercise, sets: [...exercise.sets, { reps: 8, weight: null }] }
+            : exercise
+        ),
+      },
+    }))
+  }
+  function removeSet(exerciseId: string) {
+    updateStore((current) => ({
+      ...current,
+      exercises: {
+        ...current.exercises,
+        [trainingGroup]: current.exercises[trainingGroup].map((exercise) =>
+          exercise.id === exerciseId && exercise.sets.length > 1
+            ? { ...exercise, sets: exercise.sets.slice(0, -1) }
+            : exercise
+        ),
+      },
+    }))
+  }
 
   function finishWorkout() {
-    updateStore((current) => ({ ...current, trainings: [...current.trainings, { id: crypto.randomUUID(), date: today, group: trainingGroup, exercises: current.exercises[trainingGroup].map((exercise) => ({ exerciseId: exercise.id, name: exercise.name, sets: exercise.sets })) }], activities: [...current.activities, { id: crypto.randomUUID(), kind: 'Academia', date: today, done: true }] }))
-    notify(`Treino ${trainingGroup} salvo com sucesso!`)
+    if (store.exercises[trainingGroup].length === 0) {
+      notify(`Adicione pelo menos 1 exercício na ficha ${trainingGroup} antes de concluir o treino!`)
+      return
+    }
+    updateStore((current) => {
+      const alreadyHasGymActivity = current.activities.some(
+        (a) => a.date === today && a.kind === 'Academia' && a.done
+      )
+      return {
+        ...current,
+        trainings: [
+          ...current.trainings,
+          {
+            id: crypto.randomUUID(),
+            date: today,
+            group: trainingGroup,
+            exercises: current.exercises[trainingGroup].map((exercise) => ({
+              exerciseId: exercise.id,
+              name: exercise.name,
+              sets: exercise.sets,
+            })),
+          },
+        ],
+        activities: alreadyHasGymActivity
+          ? current.activities
+          : [...current.activities, { id: crypto.randomUUID(), kind: 'Academia', date: today, done: true }],
+      }
+    })
+    notify(`Treino ${trainingGroup} concluído e salvo no histórico!`)
   }
 
   function saveCustomFood() {
@@ -596,7 +682,10 @@ function App() {
 
   function addWater(amount: number) {
     const safeAmount = sanitizeNumber(amount, 0, 5000)
-    if (!safeAmount) return
+    if (safeAmount <= 0) {
+      notify('Informe uma quantidade em ml válida (ex: 300).')
+      return
+    }
     updateStore((current) => ({ ...current, water: { ...current.water, [today]: Math.min(12000, (current.water[today] ?? 0) + safeAmount) } }))
     notify(`+${safeAmount} ml de água registrados.`)
   }
@@ -616,20 +705,6 @@ function App() {
     saveCloudConfig(nextCfg)
     setCloudCfg(nextCfg)
     await pullFromCloud(nextCfg, false)
-  }
-
-  function copyMagicSyncLink() {
-    if (!cloudCfg.token) {
-      notify('Conecte a chave primeiro antes de gerar o link.')
-      return
-    }
-    const origin = window.location.origin
-    const geminiParam = geminiKey ? `&gemini_key=${encodeURIComponent(geminiKey)}` : ''
-    const link = `${origin}/?sync_key=${encodeURIComponent(cloudCfg.token)}${geminiParam}`
-    navigator.clipboard.writeText(link).then(
-      () => notify('Link mágico (Nuvem + IA) copiado! Envie para seu celular e abra para conectar em 1 clique.'),
-      () => notify('Não foi possível copiar automaticamente.')
-    )
   }
 
   function handleSaveGeminiKey(e: React.FormEvent) {
@@ -886,6 +961,72 @@ function App() {
     } finally {
       setComboAiLoading(false)
     }
+  }
+
+  async function handleAnalyzeMachineByText(customName?: string) {
+    const targetText = (customName ?? machineQuery).trim()
+    if (!targetText) {
+      notify('Digite o nome da máquina/exercício ou tire uma foto da máquina.')
+      return
+    }
+    setMachineLoading(true)
+    if (!customName) setMachinePhotoPreview('')
+    try {
+      const guide = await analyzeGymMachineWithGemini(geminiKey, targetText)
+      setMachineGuide(guide)
+      notify(`Guia de execução carregado: ${guide.machineName}`)
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Erro ao consultar guia da máquina.')
+    } finally {
+      setMachineLoading(false)
+    }
+  }
+
+  async function handleAnalyzeMachineByPhoto(file?: File) {
+    if (!file) return
+    setMachineLoading(true)
+    try {
+      const compressed = await compressImageFileToBase64(file)
+      setMachinePhotoPreview(compressed.previewUrl)
+      const guide = await analyzeGymMachineWithGemini(geminiKey, machineQuery, {
+        mimeType: compressed.mimeType,
+        dataB64: compressed.dataB64,
+      })
+      setMachineGuide(guide)
+      notify(`Máquina identificada: ${guide.machineName}!`)
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Não foi possível analisar a foto da máquina.')
+    } finally {
+      setMachineLoading(false)
+    }
+  }
+
+  function addMachineToTrainingGroup(name: string, targetGrp: 'A' | 'B' | 'C') {
+    if (store.exercises[targetGrp].some((e) => norm(e.name) === norm(name))) {
+      setTrainingGroup(targetGrp)
+      notify(`"${name}" já está na ficha do Treino ${targetGrp}.`)
+      return
+    }
+    updateStore((current) => ({
+      ...current,
+      exercises: {
+        ...current.exercises,
+        [targetGrp]: [
+          ...current.exercises[targetGrp],
+          {
+            id: crypto.randomUUID(),
+            name,
+            sets: [
+              { reps: 12, weight: null },
+              { reps: 10, weight: null },
+              { reps: 8, weight: null },
+            ],
+          },
+        ],
+      },
+    }))
+    setTrainingGroup(targetGrp)
+    notify(`"${name}" adicionado ao Treino ${targetGrp}!`)
   }
 
   return <div className="app-shell">
@@ -1343,7 +1484,7 @@ function App() {
                 </small>
                 <div className="measure-controls">
                   {[-10, 10, 50, 100].map(delta => (
-                    <button key={delta} type="button" onClick={() => setGrams(current => ({ ...current, [food.id]: Math.min(9999, Math.max(0, (current[food.id] ?? 100) + delta)) }))}>
+                    <button key={delta} type="button" onClick={() => setGrams(current => ({ ...current, [food.id]: Math.min(9999, Math.max(0, (Number(current[food.id] === '' ? 0 : (current[food.id] ?? 100))) + delta)) }))}>
                       {delta > 0 ? '+' : ''}{delta}g
                     </button>
                   ))}
@@ -1351,7 +1492,7 @@ function App() {
                 </div>
                 <div className="serving-controls">
                   {Object.entries(store.servings).map(([label, amount]) => (
-                    <button key={label} type="button" onClick={() => setGrams(current => ({ ...current, [food.id]: Math.min(9999, Math.max(0, (current[food.id] ?? 100) + amount)) }))}>
+                    <button key={label} type="button" onClick={() => setGrams(current => ({ ...current, [food.id]: Math.min(9999, Math.max(0, (Number(current[food.id] === '' ? 0 : (current[food.id] ?? 100))) + amount)) }))}>
                       +1 {label} (+{amount}g)
                     </button>
                   ))}
@@ -1370,7 +1511,7 @@ function App() {
                     onKeyDown={blockInvalidChars}
                     onChange={event => {
                       const v = event.target.value
-                      setGrams(current => ({ ...current, [food.id]: v === '' ? 0 : sanitizeNumber(v, 0, 9999) }))
+                      setGrams(current => ({ ...current, [food.id]: v === '' ? '' : sanitizeNumber(v, 0, 9999) }))
                     }}
                   />
                   <span>g</span>
@@ -1450,6 +1591,210 @@ function App() {
           )}
         </section>
 
+        {/* Assistente de Academia IA: Foto da Máquina, Diagrama Biomecânico e Vídeo de Execução */}
+        <section className="card machine-ai-card">
+          <div className="slot-header-line">
+            <span className="eyebrow">AJUDA NA ACADEMIA · CÂMERA & EXECUÇÃO IA</span>
+            <span className="auto-pill">Visão + Vídeo</span>
+          </div>
+          <p className="supporting-text">
+            Não conhece uma máquina ou quer conferir a postura correta? Tire uma foto do aparelho na academia ou digite o nome para ver o ajuste do banco, diagrama biomecânico e vídeo de execução:
+          </p>
+          <div className="machine-ai-controls">
+            <label className="camera-upload-btn">
+              <span>📷 Tirar Foto da Máquina</span>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) void handleAnalyzeMachineByPhoto(f)
+                  e.target.value = ''
+                }}
+              />
+            </label>
+            <div className="machine-text-search">
+              <input
+                type="text"
+                placeholder="Ou digite a máquina/exercício (ex: Cadeira Extensora, Pulley)…"
+                value={machineQuery}
+                onChange={(e) => setMachineQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void handleAnalyzeMachineByText()
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="button-primary compact"
+                disabled={machineLoading}
+                onClick={() => void handleAnalyzeMachineByText()}
+              >
+                {machineLoading ? 'Analisando…' : '✦ Como Usar'}
+              </button>
+            </div>
+          </div>
+
+          {machineLoading && (
+            <div className="machine-loading-box">
+              <b>✦ Gemini Vision analisando biomecânica e preparando guia visual…</b>
+            </div>
+          )}
+
+          {machineGuide && !machineLoading && (
+            <div className="machine-guide-panel">
+              <div className="machine-guide-header">
+                <div>
+                  <span className="meal-tag-pill">
+                    {machineGuide.muscleGroup} · Sugerido: Treino {machineGuide.suggestedGroup}
+                  </span>
+                  <h3>{machineGuide.machineName}</h3>
+                  <small>{machineGuide.targetMuscles}</small>
+                </div>
+                <button
+                  type="button"
+                  className="modal-close-inline"
+                  title="Fechar guia"
+                  onClick={() => {
+                    setMachineGuide(null)
+                    setMachinePhotoPreview('')
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Ilustração Biomecânica Animada (SVG) + Preview da Foto tirada */}
+              <div className="machine-visual-grid">
+                {machinePhotoPreview && (
+                  <div className="machine-photo-box">
+                    <img src={machinePhotoPreview} alt={machineGuide.machineName} />
+                    <span>Foto analisada pela IA</span>
+                  </div>
+                )}
+                <div className="machine-biomech-box">
+                  <svg viewBox="0 0 240 135" className="biomech-svg" role="img" aria-label={`Diagrama biomecânico para ${machineGuide.machineName}`}>
+                    <defs>
+                      <linearGradient id="muscleGlow" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stopColor="#60a5fa" stopOpacity="0.95" />
+                        <stop offset="100%" stopColor="#2563eb" stopOpacity="0.4" />
+                      </linearGradient>
+                    </defs>
+                    {/* Grade técnica de fundo */}
+                    <line x1="20" y1="115" x2="220" y2="115" stroke="#1e2d42" strokeWidth="1.5" />
+                    <line x1="120" y1="15" x2="120" y2="115" stroke="#182436" strokeDasharray="3 3" strokeWidth="1" />
+
+                    {/* Silhueta Anatômica + Destaque do Grupo Muscular Alvo */}
+                    <circle cx="95" cy="28" r="10" fill="#1e293b" stroke="#64748b" strokeWidth="1.8" />
+                    {/* Tronco */}
+                    <rect
+                      x="83"
+                      y="41"
+                      width="24"
+                      height="38"
+                      rx="7"
+                      fill={
+                        machineGuide.muscleGroup === 'Peito' ||
+                        machineGuide.muscleGroup === 'Costas' ||
+                        machineGuide.muscleGroup === 'Core'
+                          ? 'url(#muscleGlow)'
+                          : '#1e293b'
+                      }
+                      stroke="#60a5fa"
+                      strokeWidth="1.5"
+                    />
+                    {/* Ombros & Braços */}
+                    <circle
+                      cx="80"
+                      cy="46"
+                      r="6"
+                      fill={machineGuide.muscleGroup === 'Ombros' ? '#3b82f6' : '#334155'}
+                    />
+                    <path
+                      d="M105 46 L138 38 L155 26"
+                      fill="none"
+                      stroke={
+                        machineGuide.muscleGroup === 'Bíceps' ||
+                        machineGuide.muscleGroup === 'Tríceps' ||
+                        machineGuide.muscleGroup === 'Peito'
+                          ? '#60a5fa'
+                          : '#64748b'
+                      }
+                      strokeWidth="5"
+                      strokeLinecap="round"
+                    />
+                    {/* Pernas */}
+                    <path
+                      d="M90 79 L84 112 M101 79 L118 112"
+                      fill="none"
+                      stroke={machineGuide.muscleGroup === 'Pernas' ? '#3b82f6' : '#64748b'}
+                      strokeWidth="6"
+                      strokeLinecap="round"
+                    />
+                    {/* Vetor de Movimento e Polia/Eixo */}
+                    <circle cx="172" cy="48" r="14" fill="#0f172a" stroke="#3b82f6" strokeWidth="2" strokeDasharray="4 2" />
+                    <path d="M172 30 L172 66 M166 36 L172 30 L178 36" fill="none" stroke="#38bdf8" strokeWidth="2" strokeLinecap="round" />
+                    <text x="172" y="84" textAnchor="middle" fill="#93c5fd" fontSize="8.5" fontWeight="700">
+                      VETOR DE FORÇA
+                    </text>
+                    <text x="120" y="128" textAnchor="middle" fill="#7f95b0" fontSize="8">
+                      Cadência: {machineGuide.cadence}
+                    </text>
+                  </svg>
+                </div>
+              </div>
+
+              <div className="machine-steps-block">
+                <b>1. Ajuste da Máquina (Setup)</b>
+                <ul>
+                  {machineGuide.setupTips.map((tip, i) => (
+                    <li key={i}>{tip}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="machine-steps-block">
+                <b>2. Execução Biomecânica Passo a Passo</b>
+                <ol>
+                  {machineGuide.executionSteps.map((step, i) => (
+                    <li key={i}>{step}</li>
+                  ))}
+                </ol>
+              </div>
+
+              <div className="machine-steps-block mistakes-block">
+                <b>Evite estes erros comuns</b>
+                <ul>
+                  {machineGuide.commonMistakes.map((errItem, i) => (
+                    <li key={i}>{errItem}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="machine-guide-actions">
+                <a
+                  className="video-watch-btn"
+                  href={`https://www.youtube.com/results?search_query=${encodeURIComponent(machineGuide.youtubeSearchQuery)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  ▶ Ver Vídeo de Execução na Prática (YouTube)
+                </a>
+                <button
+                  type="button"
+                  className="button-primary compact"
+                  onClick={() => addMachineToTrainingGroup(machineGuide.machineName, trainingGroup)}
+                >
+                  ＋ Adicionar na Ficha {trainingGroup}
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+
         <div className="group-tabs">
           {(['A', 'B', 'C'] as const).map((group) => (
             <button key={group} className={trainingGroup === group ? 'selected' : ''} onClick={() => setTrainingGroup(group)}>
@@ -1460,12 +1805,22 @@ function App() {
         </div>
 
         <div className="add-exercise">
-          <input value={newExercise} onChange={event => setNewExercise(event.target.value)} placeholder="Adicionar exercício (ex: Supino Reto, Agachamento)..." />
+          <input
+            value={newExercise}
+            onChange={event => setNewExercise(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                addExercise()
+              }
+            }}
+            placeholder="Adicionar exercício (ex: Supino Reto, Agachamento)..."
+          />
           <button className="button-primary compact" onClick={addExercise}>＋ Exercício</button>
         </div>
 
         {store.exercises[trainingGroup].length === 0 && (
-          <div className="empty-state">Sua ficha {trainingGroup} está vazia. Adicione os exercícios acima para acompanhar suas cargas e PRs.</div>
+          <div className="empty-state">Sua ficha {trainingGroup} está vazia. Adicione os exercícios acima ou use a câmera IA para identificar máquinas.</div>
         )}
 
         {store.exercises[trainingGroup].map((exercise) => {
@@ -1485,6 +1840,17 @@ function App() {
                   <div className="exercise-meta-pills">
                     {prWeight > 0 && <span className="pr-badge">PR: {format(prWeight, 1)} kg</span>}
                     {currentVolume > 0 && <span className="vol-badge">Volume: {format(currentVolume)} kg</span>}
+                    <button
+                      type="button"
+                      className="how-to-pill"
+                      onClick={() => {
+                        setMachineQuery(exercise.name)
+                        void handleAnalyzeMachineByText(exercise.name)
+                        window.scrollTo({ top: 0, behavior: 'smooth' })
+                      }}
+                    >
+                      ? Como fazer / Vídeo
+                    </button>
                   </div>
                 </div>
                 <button className="remove-button" aria-label={`Excluir ${exercise.name}`} onClick={() => removeExercise(exercise.id)}>×</button>
@@ -1497,12 +1863,34 @@ function App() {
               {exercise.sets.map((set, index) => (
                 <div className="set-row" key={index}>
                   <span>#{index + 1}</span>
-                  <input type="number" min="0" max="999" onKeyDown={blockInvalidChars} value={set.reps} aria-label={`Série ${index + 1} repetições`} onChange={event => updateSet(exercise.id, index, 'reps', sanitizeNumber(event.target.value, 0, 999))} />
-                  <input type="number" min="0" max="999" step="0.5" onKeyDown={blockInvalidChars} value={set.weight ?? ''} placeholder="kg" aria-label={`Série ${index + 1} peso kg`} onChange={event => updateSet(exercise.id, index, 'weight', event.target.value === '' ? null : sanitizeNumber(event.target.value, 0, 999))} />
+                  <input
+                    type="number"
+                    min="0"
+                    max="999"
+                    onKeyDown={blockInvalidChars}
+                    placeholder="0"
+                    value={set.reps === 0 ? '' : set.reps}
+                    aria-label={`Série ${index + 1} repetições`}
+                    onChange={event => updateSet(exercise.id, index, 'reps', event.target.value === '' ? 0 : sanitizeNumber(event.target.value, 0, 999))}
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    max="999"
+                    step="0.5"
+                    onKeyDown={blockInvalidChars}
+                    value={set.weight ?? ''}
+                    placeholder="kg"
+                    aria-label={`Série ${index + 1} peso kg`}
+                    onChange={event => updateSet(exercise.id, index, 'weight', event.target.value === '' ? null : sanitizeNumber(event.target.value, 0, 999))}
+                  />
                 </div>
               ))}
               <div className="exercise-footer-actions">
                 <button className="button-quiet" onClick={() => addSet(exercise.id)}>＋ Série</button>
+                {exercise.sets.length > 1 && (
+                  <button className="button-quiet" onClick={() => removeSet(exercise.id)}>− Série</button>
+                )}
                 <button className="button-quiet" onClick={() => startRestTimer(90)}>Descansar 90s</button>
               </div>
               {previous.length > 0 && (
@@ -1523,16 +1911,85 @@ function App() {
             <h1>Avaliação física</h1>
           </div>
         </div>
-        <form className="card assessment-form" onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const next: Measure = { id: crypto.randomUUID(), date: String(form.get('date')), weight: sanitizeNumber(String(form.get('weight')), 0, 999) || undefined, bodyFat: sanitizeNumber(String(form.get('bodyFat')), 0, 100) || undefined, muscle: sanitizeNumber(String(form.get('muscle')), 0, 999) || undefined, hydration: sanitizeNumber(String(form.get('hydration')), 0, 100) || undefined, waist: sanitizeNumber(String(form.get('waist')), 0, 999) || undefined, chest: sanitizeNumber(String(form.get('chest')), 0, 999) || undefined, arm: sanitizeNumber(String(form.get('arm')), 0, 999) || undefined }; updateStore((current) => ({ ...current, measures: [...current.measures, next].sort((a, b) => a.date.localeCompare(b.date)) })); notify('Avaliação salva.'); event.currentTarget.reset() }}>
+        <form
+          className="card assessment-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            const form = new FormData(event.currentTarget)
+            const next: Measure = {
+              id: crypto.randomUUID(),
+              date: String(form.get('date') || today),
+              weight: sanitizeNumber(String(form.get('weight')), 0, 500) || undefined,
+              bodyFat: sanitizeNumber(String(form.get('bodyFat')), 0, 80) || undefined,
+              muscle: sanitizeNumber(String(form.get('muscle')), 0, 300) || undefined,
+              hydration: sanitizeNumber(String(form.get('hydration')), 0, 100) || undefined,
+              waist: sanitizeNumber(String(form.get('waist')), 0, 300) || undefined,
+              chest: sanitizeNumber(String(form.get('chest')), 0, 300) || undefined,
+              arm: sanitizeNumber(String(form.get('arm')), 0, 150) || undefined,
+            }
+            const hasAnyMeasure =
+              next.weight != null ||
+              next.bodyFat != null ||
+              next.muscle != null ||
+              next.hydration != null ||
+              next.waist != null ||
+              next.chest != null ||
+              next.arm != null
+            if (!hasAnyMeasure) {
+              notify('Preencha pelo menos uma medida (ex: Peso corporal) antes de salvar.')
+              return
+            }
+            updateStore((current) => ({
+              ...current,
+              measures: [...current.measures, next].sort((a, b) => a.date.localeCompare(b.date)),
+            }))
+            notify('Avaliação física salva e sincronizada!')
+            event.currentTarget.reset()
+          }}
+        >
           <label>Data do exame<input type="date" name="date" required defaultValue={today} /></label>
           {([['weight', 'Peso corporal (kg)'], ['bodyFat', 'Gordura corporal (%)'], ['muscle', 'Massa muscular / massa magra (kg)'], ['hydration', 'Hidratação (%)'], ['waist', 'Cintura (cm)'], ['chest', 'Tórax / peitoral (cm)'], ['arm', 'Braço / bíceps (cm)']] as const).map(([key, label]) => (
-            <label key={key}>{label}<input type="number" min="0" max="999" step="0.1" name={key} onKeyDown={blockInvalidChars} /></label>
+            <label key={key}>{label}<input type="number" min="0" max="500" step="0.1" name={key} onKeyDown={blockInvalidChars} /></label>
           ))}
           <button className="button-primary">Salvar avaliação</button>
         </form>
         <section className="card">
           <h2>Comparação com a anterior</h2>
-          {comparisonPrevious.length < 2 ? <p className="supporting-text">Registre duas avaliações para comparar medidas.</p> : (() => { const [previous, current] = comparisonPrevious; return <div className="compare-row">{(['bodyFat', 'muscle', 'waist', 'weight', 'hydration', 'chest', 'arm'] as const).map((key) => previous[key] != null && current[key] != null && <span key={key}>{key}: {format(current[key]! - previous[key]!, 1)} {key === 'bodyFat' || key === 'hydration' ? 'p.p.' : key === 'weight' || key === 'muscle' ? 'kg' : 'cm'}</span>)}</div> })()}
+          {comparisonPrevious.length < 2 ? (
+            <p className="supporting-text">Registre duas avaliações para comparar medidas.</p>
+          ) : (
+            (() => {
+              const [previous, current] = comparisonPrevious
+              const labelsMap: Record<string, string> = {
+                weight: 'Peso',
+                bodyFat: 'Gordura corporal',
+                muscle: 'Massa magra',
+                hydration: 'Hidratação',
+                waist: 'Cintura',
+                chest: 'Peitoral',
+                arm: 'Braço',
+              }
+              return (
+                <div className="compare-row">
+                  {(['weight', 'bodyFat', 'muscle', 'waist', 'chest', 'arm', 'hydration'] as const).map(
+                    (key) =>
+                      previous[key] != null &&
+                      current[key] != null && (
+                        <span key={key}>
+                          <b>{labelsMap[key]}:</b> {current[key]! - previous[key]! > 0 ? '+' : ''}
+                          {format(current[key]! - previous[key]!, 1)}{' '}
+                          {key === 'bodyFat' || key === 'hydration'
+                            ? 'p.p.'
+                            : key === 'weight' || key === 'muscle'
+                            ? 'kg'
+                            : 'cm'}
+                        </span>
+                      )
+                  )}
+                </div>
+              )
+            })()
+          )}
         </section>
       </>}
 
@@ -1788,116 +2245,77 @@ function App() {
           <button className="button-quiet compact" onClick={() => setPage('Hoje')}>Voltar</button>
         </div>
 
-        {/* INTELIGÊNCIA ARTIFICIAL (GOOGLE GEMINI API) */}
+        {/* INTEGRAÇÃO AUTOMÁTICA DE NUVEM & IA GEMINI (SEM EXPOR CHAVES NA TELA) */}
         <section className="card cloud-db-card">
           <div className="card-heading">
             <div>
-              <span className="eyebrow">COACH DIÁRIO, BUSCA NUTRICIONAL & COMBOS · IA</span>
-              <h2>Google Gemini API</h2>
+              <span className="eyebrow">SISTEMA INTEGRADO · PC & CELULAR</span>
+              <h2>Nuvem & Inteligência Artificial</h2>
             </div>
-            <span className={`cloud-badge ${geminiKey ? 'cloud-badge-on' : ''}`}>
-              {geminiKey ? 'IA ATIVA' : 'SEM CHAVE'}
-            </span>
+            <span className="cloud-badge cloud-badge-on">ATIVO</span>
           </div>
           <p className="supporting-text">
-            Conecte seu token gratuito do Google AI Studio (<b>AIza...</b>) para ativar o Coach Diário na tela Hoje, pesquisar e cadastrar qualquer alimento/bebida automaticamente e montar combos por comando de texto.
+            O seu <b>Banco de Dados na Nuvem ({cloudCfg.owner}/{cloudCfg.repo})</b> e a <b>IA Google Gemini 3.5</b> já estão integrados diretamente no projeto principal. Qualquer dispositivo que abrir o aplicativo já sincroniza e usa a IA automaticamente.
           </p>
-          <form className="cloud-form" onSubmit={handleSaveGeminiKey}>
-            <label className="field-label" htmlFor="gemini-token">Chave da API do Gemini (Google AI Studio)</label>
-            <div className="cloud-input-row">
-              <input
-                id="gemini-token"
-                type="password"
-                autoComplete="off"
-                placeholder="Cole sua chave AIzaSy..."
-                value={geminiKeyInput}
-                onChange={(e) => setGeminiKeyInput(e.target.value)}
-              />
-              <button type="submit" className="button-primary compact">
-                Salvar Chave IA
-              </button>
-            </div>
-          </form>
-        </section>
-
-        {/* BANCO DE DADOS NA NUVEM (PC & CELULAR) */}
-        <section className="card cloud-db-card">
-          <div className="card-heading">
-            <div>
-              <span className="eyebrow">SINCRONIZAÇÃO EM TEMPO REAL · PC & CELULAR</span>
-              <h2>Banco de Dados na Nuvem</h2>
-            </div>
-            <span className={`cloud-badge ${cloudCfg.enabled ? 'cloud-badge-on' : ''}`}>
-              {cloudCfg.enabled ? 'ATIVO' : 'OFFLINE'}
-            </span>
-          </div>
-          <p className="supporting-text">
-            Seus dados são salvos de forma criptografada/privada no seu repositório exclusivo <b>{cloudCfg.owner}/{cloudCfg.repo}</b>. Nenhuma chave fica exposta no código público.
-          </p>
-
-          <form className="cloud-form" onSubmit={handleConnectCloud}>
-            <label className="field-label" htmlFor="cloud-token">Chave de Sincronização Pessoal (GitHub Token)</label>
-            <div className="cloud-input-row">
-              <input
-                id="cloud-token"
-                type="password"
-                autoComplete="off"
-                placeholder="Cole seu token ghp_..."
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-              />
-              <button type="submit" className="button-primary compact">
-                {cloudCfg.enabled ? 'Atualizar / Sincronizar' : 'Conectar Banco'}
-              </button>
-            </div>
-          </form>
 
           {syncMessage && <p className="cloud-sync-feedback">{syncMessage}</p>}
 
-          {cloudCfg.enabled && (
-            <div className="cloud-actions-grid">
-              <button type="button" className="button-quiet" onClick={() => pullFromCloud(cloudCfg, false)}>
-                ↻ Baixar da Nuvem agora
-              </button>
-              <button
-                type="button"
-                className="button-quiet"
-                onClick={async () => {
-                  setSyncStatus('syncing')
-                  const res = await pushCloudStore(cloudCfg, store, cloudShaRef.current)
-                  if (res.ok) {
-                    if (res.sha) cloudShaRef.current = res.sha
-                    setSyncStatus('synced')
-                    setSyncMessage(`Enviado às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
-                    notify('Dados deste aparelho enviados para a nuvem!')
-                  } else {
-                    setSyncStatus('error')
-                    notify(res.error || 'Erro ao enviar')
-                  }
-                }}
-              >
-                ↑ Enviar este aparelho p/ Nuvem
-              </button>
-              <button type="button" className="button-primary compact full-col" onClick={copyMagicSyncLink}>
-                🔗 Copiar Link Mágico para Conectar Celular / PC em 1 Clique
-              </button>
-              <button
-                type="button"
-                className="button-quiet full-col"
-                onClick={() => {
-                  const next = { ...cloudCfg, token: '', enabled: false }
-                  saveCloudConfig(next)
-                  setCloudCfg(next)
-                  setTokenInput('')
-                  setSyncStatus('idle')
-                  setSyncMessage('')
-                  notify('Nuvem desconectada neste aparelho.')
-                }}
-              >
-                Desconectar nuvem neste aparelho
-              </button>
-            </div>
-          )}
+          <div className="cloud-actions-grid">
+            <button type="button" className="button-quiet" onClick={() => pullFromCloud(cloudCfg, false)}>
+              ↻ Baixar da Nuvem agora
+            </button>
+            <button
+              type="button"
+              className="button-quiet"
+              onClick={async () => {
+                setSyncStatus('syncing')
+                const res = await pushCloudStore(cloudCfg, store, cloudShaRef.current)
+                if (res.ok) {
+                  if (res.sha) cloudShaRef.current = res.sha
+                  setSyncStatus('synced')
+                  setSyncMessage(`Enviado às ${new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`)
+                  notify('Dados deste aparelho enviados para a nuvem!')
+                } else {
+                  setSyncStatus('error')
+                  notify(res.error || 'Erro ao enviar')
+                }
+              }}
+            >
+              ↑ Salvar na Nuvem agora
+            </button>
+          </div>
+
+          <details className="comparison-settings">
+            <summary>Opções avançadas de chaves (oculto por padrão)</summary>
+            <form className="cloud-form" onSubmit={handleSaveGeminiKey}>
+              <label className="field-label" htmlFor="gemini-token">Substituir chave Gemini (opcional)</label>
+              <div className="cloud-input-row">
+                <input
+                  id="gemini-token"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Chave integrada ativa"
+                  value={geminiKeyInput}
+                  onChange={(e) => setGeminiKeyInput(e.target.value)}
+                />
+                <button type="submit" className="button-quiet compact">Salvar</button>
+              </div>
+            </form>
+            <form className="cloud-form" onSubmit={handleConnectCloud}>
+              <label className="field-label" htmlFor="cloud-token">Substituir chave GitHub (opcional)</label>
+              <div className="cloud-input-row">
+                <input
+                  id="cloud-token"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Chave integrada ativa"
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                />
+                <button type="submit" className="button-quiet compact">Salvar</button>
+              </div>
+            </form>
+          </details>
         </section>
 
         <section className="card setting-card">
@@ -1989,10 +2407,10 @@ function App() {
           <div className="custom-route">
             <label>Trajeto livre</label>
             <div className="route-inputs">
-              <input type="number" min="0" max="999" step="0.1" onKeyDown={blockInvalidChars} placeholder="km" value={customKm} onChange={(event) => setCustomKm(event.target.value)} />
-              <input type="number" min="0" max="999" onKeyDown={blockInvalidChars} placeholder="min" value={customMinutes} onChange={(event) => setCustomMinutes(event.target.value)} />
+              <input type="number" min="0" max="500" step="0.1" onKeyDown={blockInvalidChars} placeholder="km (ex: 4.5)" value={customKm} onChange={(event) => setCustomKm(event.target.value)} />
+              <input type="number" min="0" max="999" onKeyDown={blockInvalidChars} placeholder="min (opcional)" value={customMinutes} onChange={(event) => setCustomMinutes(event.target.value)} />
             </div>
-            <button className="button-primary" onClick={() => sanitizeNumber(customKm, 0, 999) > 0 && sanitizeNumber(customMinutes, 0, 999) > 0 ? saveBike(Number(customKm), Number(customMinutes), 'Trajeto livre') : notify('Informe km e minutos válidos.')}>Salvar trajeto</button>
+            <button className="button-primary" onClick={() => sanitizeNumber(customKm, 0, 500) > 0 ? saveBike(Number(customKm), sanitizeNumber(customMinutes, 0, 999), 'Trajeto livre') : notify('Informe uma distância em km maior que zero.')}>Salvar trajeto</button>
           </div>
         </section>
       </div>

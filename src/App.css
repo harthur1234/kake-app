@@ -1073,3 +1073,211 @@
 .combo-macros-line b {
   color: #cbd5e1;
 }
+
+
+/* ==========================================
+   AI GYM MACHINE VISION, BIOMECHANICS SVG & VIDEO GUIDE
+   ========================================== */
+.machine-ai-card {
+  border-color: #2b4a75;
+  background: linear-gradient(145deg, #132136, #0f1724);
+  padding: 16px;
+}
+.machine-ai-controls {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.camera-upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px dashed #3b82f6;
+  background: #142642;
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.15s ease;
+}
+.camera-upload-btn:hover {
+  background: #1a3257;
+  border-color: #60a5fa;
+}
+.camera-upload-btn input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.machine-text-search {
+  display: flex;
+  gap: 8px;
+}
+.machine-text-search input {
+  flex: 1;
+  min-width: 0;
+  background: #0b111a;
+  border: 1px solid #2c3f59;
+  border-radius: 10px;
+  color: #edf3fb;
+  padding: 9px 11px;
+  font-size: 11.5px;
+  outline: none;
+}
+.machine-text-search input:focus {
+  border-color: #3b82f6;
+}
+.machine-loading-box {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 11px;
+  background: #102036;
+  border: 1px solid #284b7a;
+  color: #93c5fd;
+  font-size: 11px;
+  text-align: center;
+}
+.machine-guide-panel {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #263952;
+  display: grid;
+  gap: 12px;
+}
+.machine-guide-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.machine-guide-header h3 {
+  font-size: 16px;
+  margin: 6px 0 3px;
+  color: #f1f5f9;
+}
+.machine-guide-header small {
+  font-size: 10.5px;
+  color: #93c5fd;
+}
+.modal-close-inline {
+  border: 1px solid #2e4159;
+  background: #131d2b;
+  color: #9eb3cc;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 16px;
+  cursor: pointer;
+}
+.machine-visual-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.machine-photo-box {
+  background: #0b111a;
+  border: 1px solid #24364d;
+  border-radius: 12px;
+  padding: 8px;
+  display: grid;
+  gap: 5px;
+  text-align: center;
+}
+.machine-photo-box img {
+  width: 100%;
+  max-height: 130px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.machine-photo-box span {
+  font-size: 9px;
+  color: #7f95b0;
+}
+.machine-biomech-box {
+  background: #0b111a;
+  border: 1px solid #24364d;
+  border-radius: 12px;
+  padding: 6px;
+  display: grid;
+  place-items: center;
+}
+.biomech-svg {
+  width: 100%;
+  max-height: 140px;
+}
+.machine-steps-block {
+  background: #0d1420;
+  border: 1px solid #213147;
+  border-radius: 11px;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: #cbd5e1;
+}
+.machine-steps-block b {
+  display: block;
+  color: #93c5fd;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+.machine-steps-block ul,
+.machine-steps-block ol {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 5px;
+  line-height: 1.45;
+}
+.mistakes-block {
+  border-color: #4a2530;
+  background: #171118;
+}
+.mistakes-block b {
+  color: #fca5a5;
+}
+.machine-guide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.video-watch-btn {
+  flex: 1;
+  min-width: 190px;
+  text-align: center;
+  text-decoration: none;
+  padding: 10px 12px;
+  border-radius: 11px;
+  background: #1e293b;
+  border: 1px solid #3b82f6;
+  color: #93c5fd;
+  font-size: 11px;
+  font-weight: 700;
+  transition: all 0.15s;
+}
+.video-watch-btn:hover {
+  background: #1d3557;
+  color: #fff;
+}
+.how-to-pill {
+  font-size: 9px;
+  font-weight: 650;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #13233b;
+  color: #93c5fd;
+  border: 1px solid #2b4f82;
+  cursor: pointer;
+}
+.how-to-pill:hover {
+  border-color: #60a5fa;
+  color: #fff;
+}
