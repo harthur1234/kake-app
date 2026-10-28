@@ -36,3 +36,10 @@ lerna-debug.log*
 *.sln
 *.sw?
 thumbs.db
+
+# Arquivos internos de agentes/testes
+.agents/
+PROJECT.md
+TEST_INFRA.md
+TEST_READY.md
+tests/

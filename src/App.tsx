@@ -1,5 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type LucideIcon,
+  Bike,
+  CalendarCheck,
+  Dumbbell,
+  Home,
+  MoreHorizontal,
+  Scale,
+  Settings,
+  Sparkles,
+  TrendingUp,
+  Utensils,
+  X,
+} from 'lucide-react'
 import { ConsistencySection, type DayActivityData } from './components/ConsistencySection'
+import { DayLoggerSection } from './components/DayLoggerSection'
 import {
   type CloudConfig,
   fetchCloudStore,
@@ -20,6 +35,32 @@ import {
   saveGeminiKey,
 } from './lib/geminiAi'
 import './App.css'
+
+export type Page =
+  | 'Hoje'
+  | 'Comida'
+  | 'Treinos'
+  | 'Diário IA'
+  | 'Evolução'
+  | 'Movimento'
+  | 'Avaliação'
+  | 'Rotina'
+  | 'Configurações'
+
+const MAIN_NAV_ITEMS: Array<{ id: Page; label: string; icon: LucideIcon }> = [
+  { id: 'Hoje', label: 'Hoje', icon: Home },
+  { id: 'Comida', label: 'Comida', icon: Utensils },
+  { id: 'Treinos', label: 'Treinos', icon: Dumbbell },
+  { id: 'Diário IA', label: 'Diário IA', icon: Sparkles },
+  { id: 'Evolução', label: 'Evolução', icon: TrendingUp },
+]
+
+const MORE_NAV_ITEMS: Array<{ id: Page; label: string; subtitle: string; icon: LucideIcon }> = [
+  { id: 'Movimento', label: 'Movimento', subtitle: 'Pedaladas e exercícios', icon: Bike },
+  { id: 'Avaliação', label: 'Avaliação', subtitle: 'Medidas e composição', icon: Scale },
+  { id: 'Rotina', label: 'Rotina', subtitle: 'Hábitos e horários', icon: CalendarCheck },
+  { id: 'Configurações', label: 'Configurações', subtitle: 'Nuvem e sistema', icon: Settings },
+]
 
 type Food = { id: number; description: string; category: string; energy_kcal?: number | string; protein_g?: number | string; carbohydrate_g?: number | string; lipid_g?: number | string; source?: 'TACO' | 'Estimativa' | 'Mercado Online' | 'IA Gemini'; unitKcal?: number }
 type Slot = 'Café / Merenda' | 'Almoço' | 'Pré-Treino' | 'Jantar' | 'Refeição Livre / Lanche' | 'Merenda da Escola' | 'Jantar Único'
@@ -113,8 +154,31 @@ function App() {
   const [store, setStore] = useState<Store>(safeRead)
   const [today] = useState(() => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}` })
   const [foods, setFoods] = useState<Food[]>([])
-  const [page, setPage] = useState<'Hoje' | 'Comida' | 'Movimento' | 'Treinos' | 'Evolução' | 'Avaliação' | 'Rotina' | 'Configurações'>('Hoje')
   const [slot, setSlot] = useState<Slot>(getAutoSlot)
+  const [page, setPage] = useState<Page>('Hoje')
+  const [showMoreDrawer, setShowMoreDrawer] = useState(false)
+
+  const isSecondaryPage = page === 'Movimento' || page === 'Avaliação' || page === 'Rotina' || page === 'Configurações'
+
+  const navigateTo = useCallback((targetPage: Page) => {
+    if (targetPage === 'Comida') setSlot(getAutoSlot())
+    setPage(targetPage)
+    setShowMoreDrawer(false)
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }, [])
+
+  useEffect(() => {
+    if (!showMoreDrawer) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowMoreDrawer(false)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [showMoreDrawer])
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' })
+  }, [page])
   const [search, setSearch] = useState('')
   const [grams, setGrams] = useState<Record<number, number | ''>>({})
   const [trainingGroup, setTrainingGroup] = useState<'A'|'B'|'C'>('A')
@@ -1077,11 +1141,11 @@ function App() {
               : 'Nuvem Ativa'}
           </span>
         </button>
-        <button className={`icon-button ${page === 'Configurações' ? 'active-gear' : ''}`} aria-label="Configurações" title="Configurações" onClick={() => setPage('Configurações')}>⚙</button>
+        <button className={`icon-button ${page === 'Configurações' ? 'active-gear' : ''}`} aria-label="Configurações" title="Configurações" onClick={() => navigateTo('Configurações')}><Settings size={18} /></button>
       </div>
     </header>
 
-    <main className="main-content">
+    <main className="main-content page-enter" key={page}>
       {page === 'Hoje' && <>
         <div className="page-heading">
           <div>
@@ -2041,6 +2105,16 @@ function App() {
         </section>
       </>}
 
+      {page === 'Diário IA' && (
+        <DayLoggerSection
+          store={store}
+          updateStore={updateStore}
+          notify={notify}
+          geminiKey={geminiKey}
+          today={today}
+        />
+      )}
+
       {page === 'Evolução' && <>
         <div className="page-heading">
           <div>
@@ -2424,21 +2498,91 @@ function App() {
     </main>
 
     <nav className="bottom-nav" aria-label="Navegação principal">
-      {(['Hoje', 'Comida', 'Treinos', 'Movimento', 'Evolução', 'Avaliação', 'Rotina'] as const).map((item) => (
-        <button
-          key={item}
-          className={page === item ? 'active' : ''}
-          onClick={() => {
-            if (item === 'Comida') setSlot(getAutoSlot())
-            setPage(item)
-            window.scrollTo({ top: 0, behavior: 'instant' })
-          }}
-        >
-          <span>{item === 'Hoje' ? '⌂' : item === 'Comida' ? '◉' : item === 'Treinos' ? '▤' : item === 'Movimento' ? '⌁' : item === 'Evolução' ? '▦' : item === 'Avaliação' ? '◍' : '◷'}</span>
-          {item}
-        </button>
-      ))}
+      {MAIN_NAV_ITEMS.map(({ id, label, icon: Icon }) => {
+        const isActive = page === id
+        return (
+          <button
+            key={id}
+            type="button"
+            className={isActive ? 'active' : ''}
+            aria-current={isActive ? 'page' : undefined}
+            onClick={() => navigateTo(id)}
+          >
+            <span className="nav-icon">
+              <Icon size={20} strokeWidth={isActive ? 2.3 : 1.8} />
+            </span>
+            <span className="nav-label">{label}</span>
+          </button>
+        )
+      })}
+      <button
+        type="button"
+        className={`more-tab-button ${showMoreDrawer || isSecondaryPage ? 'active' : ''}`}
+        aria-label="Mais opções"
+        aria-expanded={showMoreDrawer}
+        aria-haspopup="dialog"
+        onClick={() => setShowMoreDrawer((prev) => !prev)}
+      >
+        <span className="nav-icon">
+          <MoreHorizontal size={20} strokeWidth={showMoreDrawer || isSecondaryPage ? 2.3 : 1.8} />
+        </span>
+        <span className="nav-label">Mais</span>
+      </button>
     </nav>
+
+    {showMoreDrawer && (
+      <div
+        className="more-drawer-backdrop"
+        onClick={() => setShowMoreDrawer(false)}
+        aria-hidden="true"
+      >
+        <section
+          className="more-drawer-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Mais seções"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="more-drawer-handle" aria-hidden="true" />
+          <div className="more-drawer-header">
+            <div className="more-drawer-header-info">
+              <span className="eyebrow">NAVEGAÇÃO</span>
+              <h3>Mais opções</h3>
+            </div>
+            <button
+              type="button"
+              className="more-drawer-close"
+              aria-label="Fechar menu"
+              onClick={() => setShowMoreDrawer(false)}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="more-drawer-grid">
+            {MORE_NAV_ITEMS.map((item) => {
+              const Icon = item.icon
+              const isActive = page === item.id
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`more-drawer-item ${isActive ? 'active' : ''}`}
+                  onClick={() => navigateTo(item.id)}
+                >
+                  <div className="more-drawer-icon-orb">
+                    <Icon size={20} strokeWidth={isActive ? 2.2 : 1.8} />
+                  </div>
+                  <div className="more-drawer-item-content">
+                    <span className="more-drawer-item-title">{item.label}</span>
+                    <span className="more-drawer-item-desc">{item.subtitle}</span>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+      </div>
+    )}
 
     {bikeDialog && (
       <div className="modal-backdrop" onClick={() => setBikeDialog(false)}>

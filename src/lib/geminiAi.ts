@@ -91,7 +91,7 @@ export interface AIGymMachineGuide {
   youtubeSearchQuery: string
 }
 
-async function callGeminiJson<T>(
+export async function callGeminiJson<T>(
   apiKey: string,
   prompt: string,
   inlineImage?: { mimeType: string; dataB64: string }
