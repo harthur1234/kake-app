@@ -7,11 +7,20 @@ import {
   pushCloudStore,
   saveCloudConfig,
 } from './lib/cloudDb'
+import {
+  type DailyCoachResponse,
+  buildMealComboWithGemini,
+  generateDailyCoachInsight,
+  loadCachedCoachInsight,
+  loadGeminiKey,
+  lookupFoodWithGemini,
+  saveGeminiKey,
+} from './lib/geminiAi'
 import './App.css'
 
-type Food = { id: number; description: string; category: string; energy_kcal?: number | string; protein_g?: number | string; carbohydrate_g?: number | string; lipid_g?: number | string; source?: 'TACO' | 'Estimativa' | 'Mercado Online'; unitKcal?: number }
+type Food = { id: number; description: string; category: string; energy_kcal?: number | string; protein_g?: number | string; carbohydrate_g?: number | string; lipid_g?: number | string; source?: 'TACO' | 'Estimativa' | 'Mercado Online' | 'IA Gemini'; unitKcal?: number }
 type Slot = 'Café / Merenda' | 'Almoço' | 'Pré-Treino' | 'Jantar' | 'Refeição Livre / Lanche' | 'Merenda da Escola' | 'Jantar Único'
-type Item = { id: string; foodId: number; name: string; grams: number; kcal?: number; protein?: number; carbs?: number; fat?: number; source?: 'TACO' | 'Estimativa' | 'Mercado Online' }
+type Item = { id: string; foodId: number; name: string; grams: number; kcal?: number; protein?: number; carbs?: number; fat?: number; source?: 'TACO' | 'Estimativa' | 'Mercado Online' | 'IA Gemini' }
 type Meal = { id: string; slot: Slot; time: string; date: string; items: Item[] }
 type Activity = { id: string; kind: string; date: string; done: boolean; km?: number; minutes?: number; label?: string }
 type Measure = { id: string; date: string; weight?: number; bodyFat?: number; muscle?: number; hydration?: number; waist?: number; chest?: number; arm?: number }
@@ -73,6 +82,8 @@ const blockInvalidChars = (e: React.KeyboardEvent<HTMLInputElement>) => {
   if (['-', '+', 'e', 'E'].includes(e.key)) e.preventDefault()
 }
 
+const getCurrentHour = () => new Date().getHours()
+
 const getAutoSlot = (date = new Date()): Slot => {
   const hour = date.getHours()
   if (hour < 11) return 'Merenda da Escola'
@@ -123,6 +134,24 @@ function App() {
 
   // Exercício selecionado para o gráfico de progressão (Hevy style)
   const [selectedExerciseName, setSelectedExerciseName] = useState('')
+
+  // Inteligência Artificial (Google Gemini API)
+  const [geminiKey, setGeminiKey] = useState<string>(() => {
+    const params = new URLSearchParams(window.location.search)
+    const magicGemini = params.get('gemini_key')?.trim()
+    if (magicGemini) {
+      saveGeminiKey(magicGemini)
+      return magicGemini
+    }
+    return loadGeminiKey()
+  })
+  const [geminiKeyInput, setGeminiKeyInput] = useState(() => geminiKey)
+  const [coachInsight, setCoachInsight] = useState<DailyCoachResponse | null>(() => loadCachedCoachInsight(today))
+  const [coachLoading, setCoachLoading] = useState(false)
+  const [aiFoodLoading, setAiFoodLoading] = useState(false)
+  const [aiFoodFeedback, setAiFoodFeedback] = useState('')
+  const [comboPrompt, setComboPrompt] = useState('')
+  const [comboAiLoading, setComboAiLoading] = useState(false)
 
   // Banco de Dados na Nuvem (GitHub Private Repo DB)
   const [cloudCfg, setCloudCfg] = useState<CloudConfig>(() => {
@@ -220,7 +249,7 @@ function App() {
 
   // Limpa URL se entrou por Link Mágico e faz o primeiro pull da nuvem
   useEffect(() => {
-    if (window.location.search.includes('sync_key=')) {
+    if (window.location.search.includes('sync_key=') || window.location.search.includes('gemini_key=')) {
       window.history.replaceState({}, document.title, window.location.pathname)
     }
     if (!cloudCfg.enabled || !cloudCfg.token) return
@@ -305,7 +334,7 @@ function App() {
       ['Queijo Mussarela',330,22,3,25],['Queijo Prato',360,23,2,29],['Requeijão Cremoso',257,9.6,3.3,23],['Requeijão Light',173,13,4,12],
       ['Iogurte Natural Integral',61,3.5,4.7,3.3],['Iogurte Grego Tradicional',115,5.2,13,4.8],['Leite Condensado',321,7.8,55,8],
       ['Nescau em Pó',380,3.8,85,2.5],['Toddy em Pó',395,3,88,2.8],['Aveia em Flocos',394,14,67,8.5],
-      ['Coca-Cola Normal (por 100ml)',42,0,10.6,0],['Coca-Cola Zero (por 100ml)',0,0,0,0],['Monster Energy (por 100ml)',47,0,12,0],['Red Bull (por 100ml)',45,0,11,0],
+      ['Coca-Cola Normal (por 100ml)',42,0,10.6,0],['Coca-Cola Zero (por 100ml)',0,0,0,0],['Monster Energy (por 100ml)',47,0,12,0],['Monster Energy Zero Ultra (por 100ml)',3,0,0.9,0],['Energético Baly Tradicional (por 100ml)',45,0,11,0],['Energético Baly Zero Açúcar (por 100ml)',0,0,0,0],['Red Bull (por 100ml)',45,0,11,0],
       ['Magic Toast Cacau (por unidade)',11,0.3,2.1,0.1,11],['Batata Frita (Fast Food)',312,3.4,41,15],
     ]
     return products.filter(([name])=>!store.customFoods.some(food=>food.description===name)).map(([name,kcal,protein,carbs,fat,unitKcal],index)=>({id:-1000-index,description:name,category:'Mercado · rótulo padrão',energy_kcal:kcal,protein_g:protein,carbohydrate_g:carbs,lipid_g:fat,source:'Estimativa',unitKcal}))
@@ -595,11 +624,268 @@ function App() {
       return
     }
     const origin = window.location.origin
-    const link = `${origin}/?sync_key=${encodeURIComponent(cloudCfg.token)}`
+    const geminiParam = geminiKey ? `&gemini_key=${encodeURIComponent(geminiKey)}` : ''
+    const link = `${origin}/?sync_key=${encodeURIComponent(cloudCfg.token)}${geminiParam}`
     navigator.clipboard.writeText(link).then(
-      () => notify('Link mágico copiado! Envie para o seu celular (WhatsApp) e abra para conectar automático.'),
+      () => notify('Link mágico (Nuvem + IA) copiado! Envie para seu celular e abra para conectar em 1 clique.'),
       () => notify('Não foi possível copiar automaticamente.')
     )
+  }
+
+  function handleSaveGeminiKey(e: React.FormEvent) {
+    e.preventDefault()
+    const clean = geminiKeyInput.trim()
+    saveGeminiKey(clean)
+    setGeminiKey(clean)
+    if (clean) {
+      notify('Chave da IA Gemini salva neste dispositivo!')
+    } else {
+      notify('Chave da IA Gemini removida.')
+    }
+  }
+
+  async function refreshCoachWithAI() {
+    if (!geminiKey) {
+      setPage('Configurações')
+      notify('Cole sua chave da API Gemini nas Configurações para ativar o Coach IA.')
+      return
+    }
+    setCoachLoading(true)
+    try {
+      const yesterdayDate = new Date(`${today}T12:00:00`)
+      yesterdayDate.setDate(yesterdayDate.getDate() - 1)
+      const yesterdayIso = localDate(yesterdayDate)
+      const workoutToday =
+        store.trainings.some((t) => t.date === today) ||
+        activities.some((a) => a.kind === 'Academia' && a.done)
+      const workoutYesterday =
+        store.trainings.some((t) => t.date === yesterdayIso) ||
+        store.activities.some((a) => a.date === yesterdayIso && a.kind === 'Academia' && a.done)
+      const sortedTrainings = store.trainings.slice().sort((a, b) => a.date.localeCompare(b.date))
+      const lastGroup = sortedTrainings.length > 0 ? sortedTrainings[sortedTrainings.length - 1].group : null
+      const nextGroup = lastGroup === 'A' ? 'B' : lastGroup === 'B' ? 'C' : 'A'
+      const daysWithKcal = last7DaysNutrition.filter((d) => d.kcal > 0)
+      const avg7d =
+        daysWithKcal.length > 0
+          ? daysWithKcal.reduce((sum, d) => sum + d.kcal, 0) / daysWithKcal.length
+          : calories
+
+      const result = await generateDailyCoachInsight(geminiKey, {
+        todayDate: today,
+        currentHour: getCurrentHour(),
+        caloriesToday: calories,
+        proteinToday: protein,
+        carbsToday: carbsTotal,
+        fatToday: fatTotal,
+        calorieTarget: store.comparisonConfirmed ? store.comparison : null,
+        waterTodayMl: water,
+        waterTargetMl: store.waterReference,
+        creatineTakenToday: Boolean(store.creatine[today]),
+        workoutDoneToday: workoutToday,
+        workoutDoneYesterday: workoutYesterday,
+        lastWorkoutGroup: lastGroup,
+        nextSuggestedGroup: nextGroup,
+        streakDays: streakCount,
+        mealsCountToday: meals.length,
+        avgCaloriesLast7Days: avg7d,
+      })
+      setCoachInsight(result)
+      notify('Coach IA atualizado com base no seu dia!')
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Erro ao consultar Coach IA.')
+    } finally {
+      setCoachLoading(false)
+    }
+  }
+
+  async function handleAiFoodLookupAndAdd() {
+    const queryText = search.trim()
+    if (!queryText) {
+      notify('Digite o nome do alimento ou bebida na barra de busca primeiro.')
+      return
+    }
+    if (!geminiKey) {
+      setPage('Configurações')
+      notify('Configure sua chave da API Gemini nas Configurações para pesquisar alimentos com IA.')
+      return
+    }
+    setAiFoodLoading(true)
+    setAiFoodFeedback('Gemini IA pesquisando tabela nutricional exata e preparando registro…')
+    try {
+      const info = await lookupFoodWithGemini(geminiKey, queryText)
+      const existingCustom = store.customFoods.find((f) => norm(f.description) === norm(info.description))
+      const foodId = existingCustom ? existingCustom.id : -Date.now()
+      const newFood: Food = {
+        id: foodId,
+        description: info.description,
+        category: info.category,
+        energy_kcal: info.energy_kcal_100g,
+        protein_g: info.protein_g_100g,
+        carbohydrate_g: info.carbohydrate_g_100g,
+        lipid_g: info.lipid_g_100g,
+        source: 'IA Gemini',
+      }
+      const portionGrams = info.suggested_grams
+      const itemKcal = (info.energy_kcal_100g * portionGrams) / 100
+      const itemProt = (info.protein_g_100g * portionGrams) / 100
+      const itemCarbs = (info.carbohydrate_g_100g * portionGrams) / 100
+      const itemFat = (info.lipid_g_100g * portionGrams) / 100
+      const newItem: Item = {
+        id: crypto.randomUUID(),
+        foodId,
+        name: info.description,
+        grams: portionGrams,
+        kcal: itemKcal,
+        protein: itemProt,
+        carbs: itemCarbs,
+        fat: itemFat,
+        source: 'IA Gemini',
+      }
+      const time = SLOTS.find((entry) => entry.name === slot)?.time ?? 'Livre'
+
+      updateStore((current) => {
+        const nextCustomFoods = existingCustom
+          ? current.customFoods.map((f) => (f.id === existingCustom.id ? newFood : f))
+          : [newFood, ...current.customFoods]
+        const existingMeal = current.meals.find((m) => m.date === today && slotMatches(m, slot))
+        const nextMeals = existingMeal
+          ? current.meals.map((m) => (m.id === existingMeal.id ? { ...m, items: [...m.items, newItem] } : m))
+          : [
+              ...current.meals,
+              {
+                id: crypto.randomUUID(),
+                slot,
+                time:
+                  time === 'Livre'
+                    ? new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                    : time,
+                date: today,
+                items: [newItem],
+              },
+            ]
+        return {
+          ...current,
+          customFoods: nextCustomFoods,
+          meals: nextMeals,
+        }
+      })
+
+      setAiFoodFeedback(
+        `Salvo no banco e adicionado em ${slot}: ${portionGrams}g/ml de ${info.description} (${format(itemKcal)} kcal · P: ${format(itemProt, 1)}g · C: ${format(itemCarbs, 1)}g · G: ${format(itemFat, 1)}g). ${info.note}`
+      )
+      notify(`${info.description} (${portionGrams}g/ml) cadastrado e adicionado em ${slot}!`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erro ao pesquisar alimento com IA.'
+      setAiFoodFeedback(msg)
+      notify(msg)
+    } finally {
+      setAiFoodLoading(false)
+    }
+  }
+
+  async function handleBuildComboWithAI(alsoLogToMeal: boolean) {
+    const command = comboPrompt.trim()
+    if (!command) {
+      notify('Descreva o combo (ex: 130g de lombo, 100g de arroz e 40g de feijão).')
+      return
+    }
+    if (!geminiKey) {
+      setPage('Configurações')
+      notify('Configure sua chave da API Gemini nas Configurações para criar combos por comando de IA.')
+      return
+    }
+    setComboAiLoading(true)
+    try {
+      const result = await buildMealComboWithGemini(geminiKey, command)
+      const baseId = Date.now()
+      const createdFoods: Food[] = []
+      const comboParts: Array<{ foodId: number; grams: number }> = []
+      const mealItemsToLog: Item[] = []
+
+      result.items.forEach((part, idx) => {
+        const existingCustom = store.customFoods.find((f) => norm(f.description) === norm(part.name))
+        const foodId = existingCustom ? existingCustom.id : -(baseId + idx + 1)
+        const foodObj: Food = {
+          id: foodId,
+          description: part.name,
+          category: 'IA Gemini · Ingrediente de Combo',
+          energy_kcal: part.energy_kcal_100g,
+          protein_g: part.protein_g_100g,
+          carbohydrate_g: part.carbohydrate_g_100g,
+          lipid_g: part.lipid_g_100g,
+          source: 'IA Gemini',
+        }
+        if (!existingCustom) {
+          createdFoods.push(foodObj)
+        }
+        comboParts.push({ foodId, grams: part.grams })
+        mealItemsToLog.push({
+          id: crypto.randomUUID(),
+          foodId,
+          name: part.name,
+          grams: part.grams,
+          kcal: (part.energy_kcal_100g * part.grams) / 100,
+          protein: (part.protein_g_100g * part.grams) / 100,
+          carbs: (part.carbohydrate_g_100g * part.grams) / 100,
+          fat: (part.lipid_g_100g * part.grams) / 100,
+          source: 'IA Gemini',
+        })
+      })
+
+      const newCombo = {
+        id: crypto.randomUUID(),
+        name: result.comboName,
+        items: comboParts,
+      }
+      const time = SLOTS.find((entry) => entry.name === slot)?.time ?? 'Livre'
+
+      updateStore((current) => {
+        const nextCustomFoods = [...createdFoods, ...current.customFoods]
+        const nextCombos = [newCombo, ...current.combos]
+        if (!alsoLogToMeal) {
+          return {
+            ...current,
+            customFoods: nextCustomFoods,
+            combos: nextCombos,
+          }
+        }
+        const existingMeal = current.meals.find((m) => m.date === today && slotMatches(m, slot))
+        const nextMeals = existingMeal
+          ? current.meals.map((m) =>
+              m.id === existingMeal.id ? { ...m, items: [...m.items, ...mealItemsToLog] } : m
+            )
+          : [
+              ...current.meals,
+              {
+                id: crypto.randomUUID(),
+                slot,
+                time:
+                  time === 'Livre'
+                    ? new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                    : time,
+                date: today,
+                items: mealItemsToLog,
+              },
+            ]
+        return {
+          ...current,
+          customFoods: nextCustomFoods,
+          combos: nextCombos,
+          meals: nextMeals,
+        }
+      })
+
+      setComboPrompt('')
+      notify(
+        alsoLogToMeal
+          ? `Combo "${result.comboName}" criado pela IA e já registrado em ${slot}!`
+          : `Combo "${result.comboName}" criado pela IA e salvo para 1 clique!`
+      )
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Erro ao criar combo com IA.')
+    } finally {
+      setComboAiLoading(false)
+    }
   }
 
   return <div className="app-shell">
@@ -656,11 +942,32 @@ function App() {
           </section>
         )}
 
-        <section className="status-card">
-          <span className="status-mark">◷</span>
-          <div>
-            <span className="eyebrow">STATUS DO DIA</span>
-            <b>{status}</b>
+        <section className="status-card ai-coach-card">
+          <span className="status-mark">{coachInsight ? '✦' : '◷'}</span>
+          <div className="coach-copy">
+            <div className="coach-header-row">
+              <span className="eyebrow">
+                {coachInsight ? `COACH IA GEMINI · ${coachInsight.updatedAt}` : 'STATUS DO DIA · SEU DIA ATÉ AGORA'}
+              </span>
+              <button
+                type="button"
+                className="coach-ai-btn"
+                disabled={coachLoading}
+                onClick={refreshCoachWithAI}
+              >
+                {coachLoading ? 'Analisando dia…' : geminiKey ? '✦ Dica da IA' : '＋ Ativar IA'}
+              </button>
+            </div>
+            <b>{coachInsight ? coachInsight.headline : status}</b>
+            {coachInsight ? (
+              <small className="coach-advice">{coachInsight.advice}</small>
+            ) : (
+              <small className="coach-advice">
+                {calories > 0
+                  ? `Hoje: ${format(calories)} kcal e ${format(protein, 1)}g de proteína acumulados.${store.comparisonConfirmed && store.comparison ? ` Restam ${format(Math.max(0, store.comparison - calories))} kcal para sua referência.` : ''}`
+                  : 'Toque em "Dica da IA" para receber recomendações do Gemini com base no seu histórico.'}
+              </small>
+            )}
           </div>
         </section>
 
@@ -894,38 +1201,131 @@ function App() {
         <div className="search-wrap">
           <label className="search-box">
             <span>⌕</span>
-            <input aria-label="Buscar alimento" placeholder="Ex: Arroz, Frango, Doritos, Cheetos, Whey…" autoComplete="off" value={search} onChange={(event) => setSearch(event.target.value)} />
+            <input aria-label="Buscar alimento" placeholder="Ex: Coca-Cola Zero, Monster, Baly, Arroz, Lombo…" autoComplete="off" value={search} onChange={(event) => setSearch(event.target.value)} />
             {search && <button type="button" className="clear-search" onClick={() => setSearch('')}>×</button>}
           </label>
           {query && <div className="suggestions">{matches.slice(0, 6).map((food) => <button key={food.id} onClick={() => { setSearch(food.description); document.getElementById(`food-${food.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}>{food.description}</button>)}</div>}
         </div>
 
         {search.trim().length >= 2 && (
-          <button type="button" className="off-search-button" disabled={onlineLoading} onClick={searchOpenFoodFacts}>
-            {onlineLoading ? 'Consultando base Open Food Facts Brasil…' : `＋ Buscar “${search.trim()}” no catálogo extra de supermercado online`}
-          </button>
-        )}
-        {onlineMessage && <p className="online-search-status" role="status">{onlineMessage}</p>}
-
-        <button className="button-quiet full-width" onClick={saveCustomFood}>＋ Cadastrar novo alimento ou produto pelo rótulo</button>
-
-        {/* Combos Salvos */}
-        {store.combos.length > 0 && (
-          <div className="combo-panel">
-            <div className="combo-title"><b>Meus combos rápidos (1 clique)</b></div>
-            {store.combos.map((combo) => (
-              <div className="combo-row" key={combo.id}>
-                <button onClick={() => addCombo(combo)}>
-                  <span>
-                    <b>＋ {combo.name}</b>
-                    <small>{combo.items.length} itens · adicionar direto em {slot}</small>
-                  </span>
-                </button>
-                <button className="remove-button" aria-label={`Excluir combo ${combo.name}`} onClick={() => updateStore(current => ({ ...current, combos: current.combos.filter(x => x.id !== combo.id) }))}>×</button>
-              </div>
-            ))}
+          <div className="ai-search-actions">
+            <button
+              type="button"
+              className="ai-lookup-button"
+              disabled={aiFoodLoading}
+              onClick={handleAiFoodLookupAndAdd}
+            >
+              {aiFoodLoading
+                ? '✦ Gemini IA pesquisando macros e adicionando…'
+                : `✦ Pesquisar “${search.trim()}” com Gemini IA, Salvar no Banco e Adicionar em ${slot}`}
+            </button>
+            <button type="button" className="off-search-button" disabled={onlineLoading} onClick={searchOpenFoodFacts}>
+              {onlineLoading ? 'Consultando base Open Food Facts Brasil…' : `＋ Buscar “${search.trim()}” no catálogo Open Food Facts`}
+            </button>
           </div>
         )}
+        {aiFoodFeedback && <p className="ai-search-feedback" role="status">{aiFoodFeedback}</p>}
+        {onlineMessage && <p className="online-search-status" role="status">{onlineMessage}</p>}
+
+        {/* Criador de Combos por Comando de Texto com IA (Estilo MacroFactor AI Describe) */}
+        <section className="card ai-combo-builder-card">
+          <div className="slot-header-line">
+            <span className="eyebrow">CRIADOR DE COMBOS POR TEXTO · GEMINI IA</span>
+            <span className="auto-pill">1 Clique</span>
+          </div>
+          <p className="supporting-text">
+            Escreva como você monta seu prato da semana e a IA calcula os macros exatos, cadastra os itens e cria o botão de 1 clique:
+          </p>
+          <textarea
+            className="ai-combo-textarea"
+            rows={2}
+            placeholder="Ex: Faça um combo novo de Almoço da Semana com 130g de lombo, 100g de arroz e 35g de feijão"
+            value={comboPrompt}
+            onChange={(e) => setComboPrompt(e.target.value)}
+          />
+          <div className="ai-combo-actions">
+            <button
+              type="button"
+              className="button-quiet compact"
+              disabled={comboAiLoading}
+              onClick={() => handleBuildComboWithAI(false)}
+            >
+              {comboAiLoading ? 'Criando…' : '✦ Só Criar Combo'}
+            </button>
+            <button
+              type="button"
+              className="button-primary compact"
+              disabled={comboAiLoading}
+              onClick={() => handleBuildComboWithAI(true)}
+            >
+              {comboAiLoading ? 'Processando…' : `✦ Criar e Já Almoçar / Registrar em ${slot}`}
+            </button>
+          </div>
+        </section>
+
+        {/* Combos Salvos com Detalhamento de Ingredientes e Macros */}
+        {store.combos.length > 0 && (
+          <div className="combo-panel">
+            <div className="combo-title">
+              <b>Meus combos da semana (Toque para registrar em {slot})</b>
+            </div>
+            <div className="combo-cards-list">
+              {store.combos.map((combo) => {
+                let totalKcal = 0
+                let totalP = 0
+                let totalC = 0
+                let totalG = 0
+                const partsDesc: string[] = []
+                combo.items.forEach((part) => {
+                  const f = allFoods.find((entry) => entry.id === part.foodId)
+                  if (f) {
+                    const k = numeric(f.energy_kcal) ?? 0
+                    const p = numeric(f.protein_g) ?? 0
+                    const c = numeric(f.carbohydrate_g) ?? 0
+                    const g = numeric(f.lipid_g) ?? 0
+                    totalKcal += f.unitKcal ? f.unitKcal * part.grams : (k * part.grams) / 100
+                    totalP += (p * part.grams) / 100
+                    totalC += (c * part.grams) / 100
+                    totalG += (g * part.grams) / 100
+                    partsDesc.push(`${part.grams}g ${f.description}`)
+                  }
+                })
+                return (
+                  <div className="combo-row-card" key={combo.id}>
+                    <button type="button" className="combo-main-btn" onClick={() => addCombo(combo)}>
+                      <div className="combo-top-line">
+                        <b>＋ {combo.name}</b>
+                        <span className="combo-kcal-badge">{format(totalKcal)} kcal</span>
+                      </div>
+                      <small className="combo-ingredients-line">
+                        {partsDesc.length > 0 ? partsDesc.join(' + ') : `${combo.items.length} itens`}
+                      </small>
+                      <small className="combo-macros-line">
+                        P: <b>{format(totalP, 1)}g</b> · C: <b>{format(totalC, 1)}g</b> · G: <b>{format(totalG, 1)}g</b> · Toque para lançar em {slot}
+                      </small>
+                    </button>
+                    <button
+                      type="button"
+                      className="delete-btn"
+                      aria-label={`Excluir combo ${combo.name}`}
+                      title="Excluir combo"
+                      onClick={() =>
+                        updateStore((current) => ({
+                          ...current,
+                          combos: current.combos.filter((x) => x.id !== combo.id),
+                        }))
+                      }
+                    >
+                      ×
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <button className="button-quiet full-width" onClick={saveCustomFood}>＋ Cadastrar novo alimento manualmente pelo rótulo</button>
 
         {/* Lista de Alimentos (TACO + Mercado Local + Online) */}
         <div className="food-list">
@@ -1387,6 +1787,38 @@ function App() {
           </div>
           <button className="button-quiet compact" onClick={() => setPage('Hoje')}>Voltar</button>
         </div>
+
+        {/* INTELIGÊNCIA ARTIFICIAL (GOOGLE GEMINI API) */}
+        <section className="card cloud-db-card">
+          <div className="card-heading">
+            <div>
+              <span className="eyebrow">COACH DIÁRIO, BUSCA NUTRICIONAL & COMBOS · IA</span>
+              <h2>Google Gemini API</h2>
+            </div>
+            <span className={`cloud-badge ${geminiKey ? 'cloud-badge-on' : ''}`}>
+              {geminiKey ? 'IA ATIVA' : 'SEM CHAVE'}
+            </span>
+          </div>
+          <p className="supporting-text">
+            Conecte seu token gratuito do Google AI Studio (<b>AIza...</b>) para ativar o Coach Diário na tela Hoje, pesquisar e cadastrar qualquer alimento/bebida automaticamente e montar combos por comando de texto.
+          </p>
+          <form className="cloud-form" onSubmit={handleSaveGeminiKey}>
+            <label className="field-label" htmlFor="gemini-token">Chave da API do Gemini (Google AI Studio)</label>
+            <div className="cloud-input-row">
+              <input
+                id="gemini-token"
+                type="password"
+                autoComplete="off"
+                placeholder="Cole sua chave AIzaSy..."
+                value={geminiKeyInput}
+                onChange={(e) => setGeminiKeyInput(e.target.value)}
+              />
+              <button type="submit" className="button-primary compact">
+                Salvar Chave IA
+              </button>
+            </div>
+          </form>
+        </section>
 
         {/* BANCO DE DADOS NA NUVEM (PC & CELULAR) */}
         <section className="card cloud-db-card">
