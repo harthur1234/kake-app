@@ -634,6 +634,23 @@ function App() {
     updateStore((current) => ({ ...current, customFoods: [...current.customFoods, food] })); setSearch(name); notify('Alimento personalizado salvo.')
   }
 
+  function deleteCustomFood(food: Food) {
+    const usedIn = store.combos.filter((combo) => combo.items.some((part) => part.foodId === food.id)).length
+    const warning = usedIn > 0 ? `\n\nAtenção: este alimento é usado em ${usedIn} combo(s), que ficarão sem ele.` : ''
+    if (!window.confirm(`Tem certeza que deseja excluir "${food.description}" do seu banco de alimentos?${warning}`)) return
+    updateStore((current) => ({ ...current, customFoods: current.customFoods.filter((item) => item.id !== food.id) }))
+    notify(`"${food.description}" excluído do banco.`)
+  }
+
+  function deleteAllCustomFoods() {
+    const total = store.customFoods.length
+    if (total === 0) { notify('Você não tem alimentos adicionados no banco.'); return }
+    if (!window.confirm(`Tem certeza que deseja excluir TODOS os ${total} alimentos que você adicionou ao banco?\n\nOs registros já lançados nas refeições (histórico) são mantidos, mas combos que usam esses alimentos podem ficar incompletos.`)) return
+    if (!window.confirm('Confirmação final: apagar todos os alimentos adicionados? Esta ação não pode ser desfeita pelo app.')) return
+    updateStore((current) => ({ ...current, customFoods: [] }))
+    notify(`${total} alimentos removidos do banco.`)
+  }
+
   function exportBackup() {
     const blob = new Blob([JSON.stringify(store, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `kake-backup-${today}.json`; a.click(); URL.revokeObjectURL(url); notify('Backup exportado.')
   }
@@ -1468,12 +1485,43 @@ function App() {
 
         <button className="button-quiet full-width" onClick={saveCustomFood}>＋ Cadastrar novo alimento manualmente pelo rótulo</button>
 
+        {/* Meus alimentos adicionados ao banco (destaque + exclusão com confirmação) */}
+        <section className="card my-foods-card">
+          <div className="slot-header-line">
+            <span className="eyebrow">MEUS ALIMENTOS NO BANCO</span>
+            <span className="auto-pill">{store.customFoods.length} {store.customFoods.length === 1 ? 'item' : 'itens'}</span>
+          </div>
+          {store.customFoods.length === 0 ? (
+            <p className="supporting-text">Você ainda não adicionou alimentos. Os que você cadastrar manualmente ou pela IA aparecem aqui, destacados.</p>
+          ) : (
+            <details className="my-foods-details" open>
+              <summary>Ver / gerenciar alimentos adicionados</summary>
+              <div className="my-foods-list">
+                {store.customFoods.map((food) => (
+                  <div className="my-food-row" key={food.id}>
+                    <button type="button" className="my-food-name" title="Mostrar na lista abaixo" onClick={() => setSearch(food.description)}>
+                      <b>{food.description}</b>
+                      <small>
+                        {numeric(food.energy_kcal) === null ? 'n/d' : `${format(numeric(food.energy_kcal)!)} kcal`}
+                        {' · '}P {format(numeric(food.protein_g) ?? 0, 1)}g · C {format(numeric(food.carbohydrate_g) ?? 0, 1)}g · G {format(numeric(food.lipid_g) ?? 0, 1)}g
+                        {food.source === 'IA Gemini' ? ' · IA' : ''}
+                      </small>
+                    </button>
+                    <button type="button" className="delete-btn" aria-label={`Excluir ${food.description}`} title="Excluir do banco" onClick={() => deleteCustomFood(food)}>×</button>
+                  </div>
+                ))}
+              </div>
+              <button type="button" className="danger-all-btn" onClick={deleteAllCustomFoods}>Excluir todos os alimentos adicionados</button>
+            </details>
+          )}
+        </section>
+
         {/* Lista de Alimentos (TACO + Mercado Local + Online) */}
         <div className="food-list">
           {matches.map((food) => (
-            <article className="food-card" id={`food-${food.id}`} key={food.id}>
+            <article className={`food-card ${store.customFoods.some((f) => f.id === food.id) ? 'food-card-custom' : ''}`} id={`food-${food.id}`} key={food.id}>
               <div className="food-copy">
-                <b>{food.description}</b>
+                <b>{food.description}{store.customFoods.some((f) => f.id === food.id) && <span className="custom-badge">MEU</span>}</b>
                 <small>{food.category} · {food.source ?? 'TACO'}</small>
                 <small>
                   {numeric(food.energy_kcal) === null ? 'Energia n/d' : `${format(numeric(food.energy_kcal)!)} kcal`}
@@ -2341,7 +2389,7 @@ function App() {
           {store.customFoods.map(food => (
             <div className="manage-row" key={food.id}>
               <span>{food.description}</span>
-              <button className="remove-button" onClick={() => updateStore(current => ({ ...current, customFoods: current.customFoods.filter(item => item.id !== food.id) }))}>Excluir</button>
+              <button className="remove-button" onClick={() => deleteCustomFood(food)}>Excluir</button>
             </div>
           ))}
         </section>

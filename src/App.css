@@ -1281,3 +1281,16 @@
   border-color: #60a5fa;
   color: #fff;
 }
+
+/* Meus alimentos adicionados */
+.my-foods-card { border-color: #2b4a75; padding: 14px; }
+.my-foods-details summary { cursor: pointer; font-size: 11px; color: #93c5fd; margin: 8px 0; }
+.my-foods-list { display: grid; gap: 6px; max-height: 260px; overflow-y: auto; margin: 8px 0; }
+.my-food-row { display: flex; align-items: center; gap: 8px; background: #0e1622; border: 1px solid #263850; border-radius: 10px; padding: 8px 10px; }
+.my-food-name { flex: 1; min-width: 0; display: grid; gap: 2px; text-align: left; background: none; border: 0; color: #edf3fb; cursor: pointer; padding: 0; }
+.my-food-name b { font-size: 12px; }
+.my-food-name small { font-size: 9.5px; color: #8da1b9; }
+.danger-all-btn { width: 100%; margin-top: 6px; padding: 10px; border-radius: 10px; border: 1px solid #5c242b; background: #281317; color: #fca5a5; font-size: 11px; font-weight: 700; cursor: pointer; }
+.danger-all-btn:hover { background: #3a1a20; border-color: #ef4444; }
+.food-card-custom { border-color: #3b82f6; background: linear-gradient(145deg, #142238, #111b2a); }
+.custom-badge { margin-left: 7px; font-size: 8px; font-weight: 800; letter-spacing: .08em; padding: 2px 6px; border-radius: 6px; background: #2563eb; color: #fff; vertical-align: 1px; }
