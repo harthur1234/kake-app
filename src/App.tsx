@@ -9,6 +9,7 @@ import {
   Scale,
   Settings,
   Sparkles,
+  Timer,
   TrendingUp,
   Utensils,
   X,
@@ -198,6 +199,15 @@ function App() {
   const [restSeconds, setRestSeconds] = useState(0)
   const [restTotal, setRestTotal] = useState(90)
   const [restRunning, setRestRunning] = useState(false)
+  const [restExerciseName, setRestExerciseName] = useState('')
+  const [timerAlertFlash, setTimerAlertFlash] = useState(false)
+  const [autoRestEnabled, setAutoRestEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('kake-auto-rest') !== 'false'
+    } catch {
+      return true
+    }
+  })
 
   // Exercício selecionado para o gráfico de progressão (Hevy style)
   const [selectedExerciseName, setSelectedExerciseName] = useState('')
@@ -389,7 +399,15 @@ function App() {
       setRestSeconds((prev) => {
         if (prev <= 1) {
           setRestRunning(false)
-          setToast('Tempo de descanso finalizado! Próxima série.')
+          setTimerAlertFlash(true)
+          if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+            try {
+              navigator.vibrate([200, 100, 200, 100, 300])
+            } catch {
+              // ignore vibration error
+            }
+          }
+          setToast('Descanso finalizado! Hora da próxima série (12-10-8).')
           return 0
         }
         return prev - 1
@@ -398,10 +416,59 @@ function App() {
     return () => window.clearInterval(timer)
   }, [restRunning, restSeconds])
 
-  const startRestTimer = (seconds: number) => {
+  useEffect(() => {
+    if (!timerAlertFlash) return
+    const timer = window.setTimeout(() => {
+      setTimerAlertFlash(false)
+    }, 2000)
+    return () => window.clearTimeout(timer)
+  }, [timerAlertFlash])
+
+  const startRestTimer = (seconds: number, exerciseName?: string) => {
     setRestTotal(seconds)
     setRestSeconds(seconds)
     setRestRunning(true)
+    setTimerAlertFlash(false)
+    if (exerciseName !== undefined) {
+      setRestExerciseName(exerciseName)
+    }
+  }
+
+  const extendRestTimer = (extraSeconds = 30) => {
+    setRestSeconds((prev) => {
+      const next = prev + extraSeconds
+      setRestTotal((oldTotal) => Math.max(oldTotal, next))
+      return next
+    })
+    setRestRunning(true)
+    setTimerAlertFlash(false)
+  }
+
+  const stopRestTimer = () => {
+    setRestRunning(false)
+    setRestSeconds(0)
+    setTimerAlertFlash(false)
+    setRestExerciseName('')
+  }
+
+  const toggleAutoRest = () => {
+    setAutoRestEnabled((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('kake-auto-rest', String(next))
+      } catch {
+        // ignore storage error
+      }
+      return next
+    })
+  }
+
+  const handleWeightAutoRest = (weightVal: number | null, exerciseName: string) => {
+    if (!autoRestEnabled) return
+    if (restRunning) return
+    if (weightVal !== null && weightVal > 0) {
+      startRestTimer(restTotal || 90, exerciseName)
+    }
   }
 
   const meals = store.meals.filter((meal) => meal.date === today)
@@ -634,11 +701,12 @@ function App() {
       ...current,
       exercises: {
         ...current.exercises,
-        [trainingGroup]: current.exercises[trainingGroup].map((exercise) =>
-          exercise.id === exerciseId && exercise.sets.length < 15
-            ? { ...exercise, sets: [...exercise.sets, { reps: 8, weight: null }] }
-            : exercise
-        ),
+        [trainingGroup]: current.exercises[trainingGroup].map((exercise) => {
+          if (exercise.id !== exerciseId || exercise.sets.length >= 15) return exercise
+          const setIndex = exercise.sets.length
+          const reps = setIndex === 0 ? 12 : setIndex === 1 ? 10 : 8
+          return { ...exercise, sets: [...exercise.sets, { reps, weight: null }] }
+        }),
       },
     }))
   }
@@ -1685,12 +1753,17 @@ function App() {
             </div>
             <div className="rest-preset-buttons">
               {[60, 90, 120].map((sec) => (
-                <button key={sec} type="button" className="button-quiet compact" onClick={() => startRestTimer(sec)}>
+                <button
+                  key={sec}
+                  type="button"
+                  className={`button-quiet compact ${restTotal === sec && restRunning ? 'active-preset' : ''}`}
+                  onClick={() => startRestTimer(sec)}
+                >
                   {sec}s
                 </button>
               ))}
               {restSeconds > 0 && (
-                <button type="button" className="button-quiet compact" onClick={() => { setRestRunning(false); setRestSeconds(0) }}>
+                <button type="button" className="button-quiet compact" onClick={stopRestTimer}>
                   Zerar
                 </button>
               )}
@@ -1701,6 +1774,17 @@ function App() {
               <i style={{ width: `${Math.min(100, (restSeconds / Math.max(restTotal, 1)) * 100)}%` }} />
             </div>
           )}
+          <div className="rest-auto-row">
+            <button
+              type="button"
+              className={`pill-toggle ${autoRestEnabled ? 'active' : ''}`}
+              onClick={toggleAutoRest}
+              aria-pressed={autoRestEnabled}
+            >
+              <span className="pill-dot" />
+              Auto-descanso ao registrar peso ({restTotal || 90}s)
+            </button>
+          </div>
         </section>
 
         {/* Assistente de Academia IA: Foto da Máquina, Diagrama Biomecânico e Vídeo de Execução */}
@@ -1972,38 +2056,57 @@ function App() {
                 <span>Reps</span>
                 <span>Peso (kg)</span>
               </div>
-              {exercise.sets.map((set, index) => (
-                <div className="set-row" key={index}>
-                  <span>#{index + 1}</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="999"
-                    onKeyDown={blockInvalidChars}
-                    placeholder="0"
-                    value={set.reps === 0 ? '' : set.reps}
-                    aria-label={`Série ${index + 1} repetições`}
-                    onChange={event => updateSet(exercise.id, index, 'reps', event.target.value === '' ? 0 : sanitizeNumber(event.target.value, 0, 999))}
-                  />
-                  <input
-                    type="number"
-                    min="0"
-                    max="999"
-                    step="0.5"
-                    onKeyDown={blockInvalidChars}
-                    value={set.weight ?? ''}
-                    placeholder="kg"
-                    aria-label={`Série ${index + 1} peso kg`}
-                    onChange={event => updateSet(exercise.id, index, 'weight', event.target.value === '' ? null : sanitizeNumber(event.target.value, 0, 999))}
-                  />
-                </div>
-              ))}
+              {exercise.sets.map((set, index) => {
+                const prevWeight = previous[0]?.sets[index]?.weight ?? previous[0]?.sets.slice().reverse().find((s) => s.weight != null)?.weight
+                const placeholderWeight = prevWeight != null ? `Último: ${prevWeight}kg` : prWeight > 0 ? `PR: ${prWeight}kg` : 'kg'
+                const repsTarget = index === 0 ? '12' : index === 1 ? '10' : '8'
+
+                return (
+                  <div className="set-row" key={index}>
+                    <span>#{index + 1}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="999"
+                      onKeyDown={blockInvalidChars}
+                      placeholder={repsTarget}
+                      value={set.reps === 0 ? '' : set.reps}
+                      aria-label={`Série ${index + 1} repetições`}
+                      onChange={(event) => updateSet(exercise.id, index, 'reps', event.target.value === '' ? 0 : sanitizeNumber(event.target.value, 0, 999))}
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      max="999"
+                      step="0.5"
+                      onKeyDown={(e) => {
+                        blockInvalidChars(e)
+                        if (e.key === 'Enter') {
+                          const raw = (e.target as HTMLInputElement).value
+                          const val = raw === '' ? null : sanitizeNumber(raw, 0, 999)
+                          handleWeightAutoRest(val ?? set.weight, exercise.name)
+                          ;(e.target as HTMLInputElement).blur()
+                        }
+                      }}
+                      value={set.weight ?? ''}
+                      placeholder={placeholderWeight}
+                      aria-label={`Série ${index + 1} peso kg`}
+                      onChange={(event) => updateSet(exercise.id, index, 'weight', event.target.value === '' ? null : sanitizeNumber(event.target.value, 0, 999))}
+                      onBlur={(event) => {
+                        const raw = event.target.value
+                        const val = raw === '' ? null : sanitizeNumber(raw, 0, 999)
+                        handleWeightAutoRest(val ?? set.weight, exercise.name)
+                      }}
+                    />
+                  </div>
+                )
+              })}
               <div className="exercise-footer-actions">
                 <button className="button-quiet" onClick={() => addSet(exercise.id)}>＋ Série</button>
                 {exercise.sets.length > 1 && (
                   <button className="button-quiet" onClick={() => removeSet(exercise.id)}>− Série</button>
                 )}
-                <button className="button-quiet" onClick={() => startRestTimer(90)}>Descansar 90s</button>
+                <button className="button-quiet" onClick={() => startRestTimer(restTotal || 90, exercise.name)}>Descansar {restTotal || 90}s</button>
               </div>
               {previous.length > 0 && (
                 <div className="load-history">
@@ -2496,6 +2599,55 @@ function App() {
         </section>
       </>}
     </main>
+
+    {/* Pílula Flutuante Global do Timer de Descanso (Sticky Bottom) */}
+    {(restRunning || timerAlertFlash || restSeconds > 0) && (
+      <aside
+        className={`floating-rest-pill ${timerAlertFlash ? 'pill-alert-flash' : ''}`}
+        role="region"
+        aria-label="Cronômetro de descanso entre séries"
+      >
+        <div
+          className="floating-rest-pill-track"
+          style={{ width: `${restTotal > 0 ? Math.min(100, Math.max(0, (restSeconds / restTotal) * 100)) : 0}%` }}
+        />
+        <div className="floating-rest-pill-content">
+          <div className="floating-rest-pill-info">
+            <span className="floating-rest-icon-wrap" aria-hidden="true">
+              <Timer size={18} />
+            </span>
+            <div className="floating-rest-texts">
+              <span className="floating-rest-time">
+                {String(Math.floor(restSeconds / 60)).padStart(2, '0')}:{String(restSeconds % 60).padStart(2, '0')}
+              </span>
+              <span className="floating-rest-label" title={restExerciseName || 'Descanso entre séries'}>
+                {timerAlertFlash
+                  ? 'Descanso finalizado! Próxima série (12-10-8)'
+                  : (restExerciseName ? `${restExerciseName} · Descanso` : 'Descanso entre séries')}
+              </span>
+            </div>
+          </div>
+          <div className="floating-rest-pill-actions">
+            <button
+              type="button"
+              className="floating-rest-action-btn extend-btn"
+              onClick={() => extendRestTimer(30)}
+              aria-label="Adicionar 30 segundos ao descanso"
+            >
+              +30s
+            </button>
+            <button
+              type="button"
+              className="floating-rest-action-btn skip-btn"
+              onClick={stopRestTimer}
+              aria-label="Pular ou zerar descanso"
+            >
+              Pular
+            </button>
+          </div>
+        </div>
+      </aside>
+    )}
 
     <nav className="bottom-nav" aria-label="Navegação principal">
       {MAIN_NAV_ITEMS.map(({ id, label, icon: Icon }) => {

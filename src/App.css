@@ -589,9 +589,200 @@
   gap: 6px;
   flex-wrap: wrap;
 }
+.rest-preset-buttons button.active-preset {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #ffffff;
+}
 .rest-progress {
   margin-top: 10px;
   margin-bottom: 0;
+}
+.rest-auto-row {
+  margin-top: 11px;
+  display: flex;
+  align-items: center;
+}
+.pill-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: 20px;
+  border: 1px solid #2a3d54;
+  background: #101824;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.pill-toggle .pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #475569;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.pill-toggle.active {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: #3b82f6;
+  color: #93c5fd;
+}
+.pill-toggle.active .pill-dot {
+  background: #3b82f6;
+  box-shadow: 0 0 6px #3b82f6;
+}
+
+/* Pílula Flutuante Global do Timer (Sticky Bottom) */
+.floating-rest-pill {
+  position: fixed;
+  bottom: calc(58px + max(8px, env(safe-area-inset-bottom)));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(calc(100% - 20px), 700px);
+  z-index: 25;
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid #294366;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(59, 130, 246, 0.15);
+  animation: slideUpPill 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideUpPill {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.floating-rest-pill.pill-alert-flash {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px #3b82f6, 0 0 24px rgba(59, 130, 246, 0.65);
+  animation: flashRoyalBlue 0.45s ease-in-out infinite alternate;
+}
+
+@keyframes flashRoyalBlue {
+  0% {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px #3b82f6, 0 0 22px rgba(59, 130, 246, 0.6);
+  }
+  100% {
+    border-color: #60a5fa;
+    box-shadow: 0 0 0 3px #60a5fa, 0 0 30px rgba(96, 165, 250, 0.85);
+  }
+}
+
+.floating-rest-pill-track {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  transition: width 0.2s linear;
+  z-index: 1;
+}
+
+.floating-rest-pill-content {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  gap: 10px;
+}
+
+.floating-rest-pill-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.floating-rest-icon-wrap {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.floating-rest-texts {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.floating-rest-time {
+  font-size: 16px;
+  font-weight: 750;
+  color: #edf3fb;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.floating-rest-label {
+  font-size: 10.5px;
+  color: #93a1b3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.floating-rest-pill-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.floating-rest-action-btn {
+  border: 1px solid #2e435f;
+  background: #152233;
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 6px 11px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.floating-rest-action-btn:hover {
+  background: #1c2e47;
+  border-color: #3b82f6;
+  color: #ffffff;
+}
+
+.floating-rest-action-btn:active {
+  transform: scale(0.95);
+}
+
+.floating-rest-action-btn.skip-btn {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.32);
+  color: #fca5a5;
+}
+
+.floating-rest-action-btn.skip-btn:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: #ef4444;
+  color: #ffffff;
 }
 
 .exercise-meta-pills {
@@ -2790,7 +2981,10 @@ button:active:not(:disabled),
   .progress-bar,
   .progress-fill,
   .water-progress i,
-  .rest-progress i {
+  .rest-progress i,
+  .floating-rest-pill,
+  .floating-rest-pill.pill-alert-flash,
+  .floating-rest-pill-track {
     animation: none !important;
     transition: none !important;
   }
